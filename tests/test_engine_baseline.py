@@ -288,7 +288,9 @@ def test_spend_basis_excludes_unsplit_pools(result, m):
 def test_marimekko_tiles_reconcile_to_rollup(result, m, segment_by, basis, parent):
     from profit_pools.core.model.views import marimekko_tiles
     if basis != "allowed" and parent == "PAY_COMM":
-        pytest.skip("payer pools have no paid/consumer split")
+        v = marimekko_tiles(result, m, "MARKET", 2025, parent, Geo(), basis, segment_by)
+        assert v.rows.empty and {u.node_id for u in v.unavailable} == {"PAY_COMM_IND", "PAY_COMM_SG", "PAY_COMM_LG"}
+        return
     for geo in (Geo(), Geo("state", "NVL")):
         cols = rollup(result, m, "MARKET", 2025, parent, geo, basis).rows.set_index("node_id")
         tiles = marimekko_tiles(result, m, "MARKET", 2025, parent, geo, basis, segment_by).rows
@@ -319,3 +321,13 @@ def test_change_drivers_sum_to_parent_change(result, m):
     prev = rollup(result, m, "MARKET", 2024, None).rows.set_index("node_id").loc["PROVIDER", "revenue"]
     assert np.isclose(d["d_revenue"].sum(), cur - prev, rtol=1e-9)
     assert np.isclose(d["share_of_change"].sum(), 1.0)
+
+
+def test_pmpm_never_mixes_sector_revenue(result, m):
+    from profit_pools.core.model.views import node_metrics
+    allp = node_metrics(result, m, "MARKET", 2025, None)
+    payer = node_metrics(result, m, "MARKET", 2025, "PAYER")
+    assert np.isclose(allp["revenue_pmpm"], payer["revenue_pmpm"])
+    assert np.isclose(allp["mlr"], payer["mlr"])
+    assert np.isclose(allp["payer_opex"], payer["opex"])
+    assert np.isnan(node_metrics(result, m, "MARKET", 2025, "PROVIDER")["revenue_pmpm"])

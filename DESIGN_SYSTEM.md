@@ -21,7 +21,7 @@ and the Plotly template, so the UI and the charts can't drift apart.
 | Frame | 1440 wide. Auto-layout vertical. Background `--bg` |
 | Left nav | 216 fixed. Module list and footer (data source badge). Collapses to an icon rail (56) under 1200 |
 | Main column | Fluid. Horizontal padding 32. Max content width 1600 |
-| Global bar | Height 48, sticky top. Hairline bottom border. Items: **Dataset** (segmented: Total market / Enterprise) · Year · Geography · View (Baseline / Scenario / Compare) · Scope · Scenario chip · Export |
+| Global bar | Sticky top, wrapping horizontal container (wraps instead of clipping below about 1280). Hairline bottom border. Items: **Dataset** (segmented: Total market / Enterprise) · Year · Geography · View (Baseline / Scenario / Compare) · Scope · Scenario chip · Export |
 | Section rhythm | 40 between sections (A–E), 16 between a section header and its content |
 | Grid | 12 columns, 24 gutter. Marimekko spans 12. Supporting charts are 6 + 6 or 8 + 4 |
 | Inspector | Right column, 4/12 (about 360 at 1440), shown only when a selection exists. Never floats over the chart |
@@ -60,7 +60,8 @@ and the Plotly template, so the UI and the charts can't drift apart.
 * The scale is asymmetric and **anchored at 0%**: losses are red, gains teal, with gray at zero.
 * Endpoints are clamped, and the legend shows the clamp ("≤ −10%", "≥ 20%").
 * **Missing margin:** fill `#F3F4F6` with a 45° hatch in `#C9D1D8` and a legend entry "Margin unavailable".
-* **Top-down estimate:** normal fill, plus a dotted 1px tile outline and an "Estimate" badge in the tooltip.
+* **Top-down estimate:** normal fill, with "· est." appended to the tile label and an explicit note in the tooltip.
+  Plotly bars cannot draw dotted outlines.
 
 ### Layer identity — categorical (Sankey nodes, trend lines, layer legends)
 Fixed order, never cycled, never re-assigned by rank. Validated with the dataviz CVD checker on white:
@@ -157,11 +158,18 @@ Negative numbers use a true minus (−), not a hyphen. Unavailable values render
 * Gaps between tiles are 2px in `--surface`.
 * Labels inside a tile only when it is at least 64px wide and 28px tall: the short label, plus revenue
   when there's room. Labels are white on dark fills and `--ink-1` on light fills.
-* Column headers above the plot show the label and the column's revenue share.
+* Column headers above the plot show the label, plus the revenue share when the column is ≥ 14% wide.
+  Columns narrower than 4.5% have no header (the tooltip names them).
 * **Tooltip:** name and path; revenue and share of parent; operating gain; margin; enrollment and PMPMs
   where available; provenance; and Δ vs baseline when a scenario is applied.
-* **Selection:** the selected tile gets a 2px `--ink-1` outline and the others drop to 55% opacity. A
-  "Drill into" button appears when the tile has children. The breadcrumb navigates back up.
+* **Selection:** click a tile, or use the synchronized "Selected pool" selector; a whole column can also be
+  selected.
+  * The selected tile or column gets a 2px `--ink-1` outline, and the others drop to 72% opacity.
+  * "Drill into ‹column›" makes the column the new parent. "Open ‹tile›" jumps straight to the tile.
+  * The breadcrumb navigates back up and keeps the previous scope selected.
+* **Segment columns by:** Sub-pools (next hierarchy level), Geography (states, or counties within a state), or
+  Funding source (payer LOB groups, uninsured, traditional Medicare & public, supplemental).
+* **Spend basis:** Allowed / Payer-paid / Consumer.
 * **Compare mode:** a toggle between Scenario and Δ vs Baseline. In Δ mode, colors encode the margin change
   in pp (diverging), and the widths still show scenario revenue.
 

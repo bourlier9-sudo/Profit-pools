@@ -22,7 +22,8 @@ import pandas as pd
 from profit_pools.core.model.engine import ModelResult
 from profit_pools.core.taxonomy import Metadata
 
-ADDITIVE = ["members", "revenue", "allowed", "claims", "opex", "gain", "revenue_with_margin"]
+ADDITIVE = ["members", "revenue", "allowed", "claims", "opex", "gain", "revenue_with_margin",
+            "payer_revenue", "payer_opex"]
 
 # Spend basis: which part of allowed receipts to show for flow recipients.
 #   allowed   everything the recipient receives (payer/program-paid + consumer)
@@ -88,6 +89,10 @@ def select(result: ModelResult, dataset: str, geo: Geo, years: list[int] | int |
         out["opex"] = out["opex"] * frac
         out["revenue"] = part
     out["revenue_with_margin"] = np.where(out["margin_known"], out["revenue"], 0.0)
+    # Per-member measures use payer rows only, so mixed aggregates never divide sector revenue by members.
+    is_payer = out["members"].notna()
+    out["payer_revenue"] = np.where(is_payer, out["revenue"], 0.0)
+    out["payer_opex"] = np.where(is_payer, out["opex"], 0.0)
     out["gain"] = out["gain"].where(out["margin_known"], 0.0)
     return out
 
@@ -99,12 +104,12 @@ def _finish(g: pd.DataFrame) -> pd.DataFrame:
         g["margin"] = np.where(g["revenue_with_margin"] > 0, g["gain"] / g["revenue_with_margin"], np.nan)
         g["margin_coverage"] = np.where(g["revenue"] > 0, g["revenue_with_margin"] / g["revenue"], np.nan)
         mm12 = g["members"] * 12
-        g["revenue_pmpm"] = np.where(mm12 > 0, g["revenue"] / mm12, np.nan)
+        g["revenue_pmpm"] = np.where(mm12 > 0, g["payer_revenue"] / mm12, np.nan)
         g["paid_pmpm"] = np.where(mm12 > 0, g["claims"] / mm12, np.nan)
         g["allowed_pmpm"] = np.where(mm12 > 0, g["allowed"] / mm12, np.nan)
-        g["mlr"] = np.where(g["members"] > 0, g["claims"] / g["revenue"], np.nan)
+        g["mlr"] = np.where(g["members"] > 0, g["claims"] / g["payer_revenue"], np.nan)
     g.loc[g["revenue_with_margin"] <= 0, "gain"] = np.nan
-    g.loc[~(g["members"] > 0), ["members", "claims", "allowed"]] = np.nan
+    g.loc[~(g["members"] > 0), ["members", "claims", "allowed", "payer_revenue", "payer_opex"]] = np.nan
     return g
 
 
@@ -314,9 +319,9 @@ def marimekko_tiles(result: ModelResult, meta: Metadata, dataset: str, year: int
         # explicitly labeled segment per column, so columns still reconcile to rollup().
         other = select(result, dataset, geo, year, basis)
         other = other[other["revenue_paid"].isna()]
+        other["col"] = other["node_id"].map(_ancestor_map(meta, depth))
+        other = other[other["col"].isin(col_ids)]
         if len(other):
-            other["col"] = other["node_id"].map(_ancestor_map(meta, depth))
-            other = other[other["col"].isin(col_ids)]
             o = other.groupby("col")[["revenue", "gain", "revenue_with_margin", "members"]].sum(min_count=1).reset_index()
             o["seg_key"], o["seg_label"] = "_unsplit", "Not split by funder"
             seg = pd.concat([seg, o], ignore_index=True)
@@ -346,7 +351,7 @@ def marimekko_tiles(result: ModelResult, meta: Metadata, dataset: str, year: int
         seg = seg.reset_index()
         seg["seg_node_id"] = seg["seg_key"] if segment_by == "hierarchy" else None
 
-    seg = _finish(seg.assign(allowed=np.nan, claims=np.nan, opex=np.nan))
+    seg = _finish(seg.assign(allowed=np.nan, claims=np.nan, opex=np.nan, payer_revenue=np.nan, payer_opex=np.nan))
     seg = seg[seg["revenue"] > 0]
     colrev = cols.rows.set_index("node_id")["revenue"]
     seg["col_revenue"] = seg["col"].map(colrev)
@@ -373,3 +378,19 @@ def revenue_components(result: ModelResult, meta: Metadata, dataset: str, year: 
     g = g.rename(columns={"amount": "allowed"})
     g["share"] = g["allowed"] / g["allowed"].sum()
     return g.sort_values("allowed", ascending=False).drop(columns="key").reset_index(drop=True)
+
+
+def node_metrics(result: ModelResult, meta: Metadata, dataset: str, year: int, node_id: str | None,
+                 geo: Geo = Geo(), basis: str = "allowed") -> pd.Series | None:
+    """One node's metrics (all in-dataset pools when node_id is None); None if unavailable here."""
+    if node_id is None:
+        rows = rollup(result, meta, dataset, year, None, geo, basis).rows
+        if rows.empty:
+            return None
+        g = rows[ADDITIVE].sum(min_count=1).to_frame().T
+        out = _finish(g).iloc[0]
+        out["share_of_parent"] = 1.0
+        return out
+    parent = meta.taxonomy[node_id].parent_id
+    rows = rollup(result, meta, dataset, year, parent, geo, basis).rows.set_index("node_id")
+    return rows.loc[node_id] if node_id in rows.index else None

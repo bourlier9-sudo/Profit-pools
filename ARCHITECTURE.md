@@ -16,7 +16,7 @@
 ## 2. Module map
 
 ```
-app.py                                   Streamlit entry (Phase 3)
+app.py                                   Streamlit entry: page config, theme, module navigation      ✅ Phase 3
 profit_pools/
   core/                                  ── pure Python ──────────────────────────
     config/          *.yaml + loader      taxonomy, datasets, funding sources, lobs, categories, geo, periods,
@@ -35,10 +35,10 @@ profit_pools/
       ledger.py                           per-assumption lineage + sequential attribution bridge
       growth.py                           growth decomposition (CAGR helper lives in views.py)
     export/           (Phase 7)           csv, scenario_json, html_snapshot, pptx_summary
-  design/             (Phase 3)           tokens.py, theme.css, plotly_template.py, components.py
-  charts/             (Phase 3+)          marimekko.py, sankey.py, trends.py, waterfall.py — figure builders only
-  shell/              (Phase 3)           header, global bar, scenario chip, inspector, export menu
-  modules/            (Phase 3)           registry.py + profit_pools/ (workspace sections A–E)
+  design/                                 tokens.py · theme.py (CSS + Plotly template) · format.py · components.py   ✅
+  charts/                                 marimekko.py · trends.py ✅ · sankey.py, waterfall.py (Phases 5–6)
+  shell/                                  state.py (pp.* keys) · data.py (cached adapter/engine) · layout.py         ✅
+  modules/                                registry.py + profit_pools/page.py (sections A, B, E-table)               ✅
 tests/
 ```
 
@@ -70,7 +70,7 @@ The engine's only input is a **driver cube** at the finest grain:
 | Frame | Grain | Drivers |
 |---|---|---|
 | `payer` | dataset × year × county × payer leaf | `members`, `premium_pmpm`, `opex_pmpm` (derived residual) |
-| `spend` | … × source (payer leaf or funding source) × category | `allowed_pmpm` (per member or person of the source), `inst_per_member` (where instances exist) |
+| `spend` | … × source (payer leaf or funding source) × category | `allowed_pmpm` (per member or person of the source), `paid_ratio` (paid ÷ allowed), `inst_per_member` (where instances exist) |
 | `population` | dataset × year × county × funding source | `population` (uninsured, traditional Medicare & public) |
 | `supplemental` | dataset × year × state × funding source × hospital leaf | `amount` |
 | `recipient_margin` | dataset × year × state × recipient leaf | `margin` (NaN = unavailable) |
@@ -97,7 +97,7 @@ them with no assumptions. Phase 4 inserts assumption resolution between stages.
 | 1 | Growth | baseline rates ± growth assumptions | forecast-year driver levels |
 | 2 | Volume | `enrollment`, `enrollment_shift` (incl. to/from uninsured), `funding_population` | members, populations |
 | 3 | Payer unit economics | `premium_pmpm`, `opex_pmpm`, `opex_volume_scaling`, then `payer_margin` (last) | payer PMPMs |
-| 4 | Spending | `allowed_pmpm` / `funding_pmpm`; `utilization`, `unit_price` (instance categories only) | allowed PMPM, instances per member |
+| 4 | Spending | `allowed_pmpm` / `funding_pmpm`; `member_cost_share`; `utilization`, `unit_price` (instance categories only) | allowed PMPM, paid ratio, instances per member |
 | 5 | Payer financials | — | revenue = premium × mm; opex = opex PMPM × mm |
 | 6 | Flows | `supplemental_payments` | payer / funding flows = allowed PMPM × members or population × 12; supplemental amounts; payer claims = Σ payer flows; payer gain |
 | 7 | Recipient financials | `provider_margin` | revenue = Σ inflows; gain = revenue × margin |
@@ -113,8 +113,11 @@ How changes propagate (always through drivers):
   * Payer members fall and the uninsured population rises.
   * Medicaid flows fall and uninsured flows rise at their own PMPMs, so the net change in recipient
     revenue is shown.
-* **Allowed PMPM +x% on Hospitals:** payer claims ↑, so payer gain ↓ (premium unchanged). Hospital revenue
-  and gain ↑ at constant margin.
+* **Allowed PMPM +x% on Hospitals:** payer *paid* claims rise (allowed × paid ratio), so payer gain falls
+  (premium unchanged). Consumer spend rises by the rest. Hospital revenue (allowed) and gain rise at
+  constant margin.
+* **Member cost share +2 pp:** paid falls and consumer rises by the same amount. Payer claims fall and
+  payer gain rises. Recipient revenue and gain are unchanged.
 * **Utilization vs unit price** (instance categories only): both change allowed and the same downstream
   values. They differ only in instances and price per instance.
 * **Supplemental payments +x%:** hospital revenue and gain only.
@@ -237,9 +240,11 @@ It runs the pipeline with the assumption and without it.
 ```python
 ModelResult(
   pools,   # dataset, year, is_forecast, geo_level, state, county, node_id, layer_id, lob,
-           # members, revenue, claims, opex, gain, margin_known, source_type
+           # members, revenue, revenue_paid (recipients), allowed (payers), claims (payer-paid),
+           # opex, gain, margin_known, source_type
   flows,   # dataset, year, is_forecast, state, county, source_id, source_kind, flow_kind,
-           # lob, category, target_id, amount, instances
+           # lob, category, target_id, amount (allowed), paid, consumer, instances,
+           # margin, gain (= amount × target pool margin; sums to recipient gain)
   base_year, scenario_id)
 ```
 
@@ -253,8 +258,13 @@ ModelResult(
 `views.py` only filters, groups and sums. It recomputes non-additive measures (margin over revenue *with*
 margin data, margin coverage, PMPMs, MLR):
 
-* `rollup(result, meta, dataset, year, parent_id, geo)`: children of any node, plus `unavailable` (with
-  reasons) and coverage notes.
+* `rollup(result, meta, dataset, year, parent_id, geo, basis)`: children of any node, plus `unavailable`
+  (with reasons) and coverage notes. `basis ∈ {allowed, paid, consumer}`.
+* `marimekko_tiles(..., segment_by)`: columns = children; segments = sub-pools, geography or funding source.
+  It reconciles to `rollup` by test.
+* `revenue_components(...)`: recipient revenue by funder, split into paid and consumer.
+* `change_drivers(...)`: year-over-year change by child.
+* `node_metrics(...)`: one node's metrics. Per-member measures use payer rows only.
 * `node_series(...)`: per-year trend for a node.
 * `totals(...)`: headline KPIs. Revenue is gross sector revenue.
 * `cagr(start, end, n)`: realized CAGR, NaN ("n/m") at a non-positive endpoint.
@@ -281,7 +291,7 @@ Geography semantics:
 | Concern | Decision |
 |---|---|
 | Version | Local target Streamlit ≥ 1.37 (developed on 1.66). |
-| Chart clicks | Marimekko is Plotly bars, so `on_select="rerun"` works, plus a synchronized selector that is always present. Sankey: Streamlit returns no Sankey events, so selection is via synchronized controls. No fake double-click. |
+| Chart clicks | Marimekko is ONE Plotly bar trace with per-tile x/width/base, so `on_select` returns the clicked tile (via `customdata`). The callback maps it to `pp.selected`, and a synchronized selectbox mirrors it. Both are tested with AppTest and in a real browser. Sankey: Streamlit returns no Sankey events, so selection is via synchronized controls. No fake double-click. |
 | Dialogs | `st.dialog` for the assumption builder, `st.popover` for compact menus. |
 | Custom components | None. This keeps the warehouse runtime of Streamlit in Snowflake viable. |
 | Styling | CSS injected via `st.markdown(unsafe_allow_html=True)`, with stable `st-key-*` class hooks. Inter via Google Fonts, falling back to a system font stack (Snowflake or offline). |

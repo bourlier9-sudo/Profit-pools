@@ -10,11 +10,11 @@ participants, and how scenarios would change those economics, all from one analy
 
 ```bash
 pip install -r requirements.txt
-python -m pytest                              # 83 tests
+python -m pytest                              # unit + reconciliation + UI smoke tests
 python -m profit_pools.core.data.synthetic    # fictional dataset summary + contract validation (market + enterprise)
 ```
 
-The Streamlit app arrives in Phase 3 (see [BUILD_PLAN.md](BUILD_PLAN.md)).
+Run the app with `streamlit run app.py` (see [BUILD_PLAN.md](BUILD_PLAN.md) for status).
 
 ## Documentation
 

@@ -7,7 +7,7 @@ Status legend: ✅ done · 🔄 in progress · ⏳ planned
 | 0 | Project docs, scaffold, requirements, pytest | ✅ |
 | 1 | Configuration, taxonomy, synthetic data, contracts, adapters, reconciliation tests (revised: datasets, explicit revenue components, instances, L1–L4) | ✅ |
 | 2 | Baseline driver cube, forecast projection, engine (no assumptions), roll-ups, geography, coverage, `ModelResult` | ✅ |
-| 3 | App shell, design system, KPI strip, **Marimekko and drilldown**, trends and detail (Section B) | ⏳ |
+| 3 | App shell, design system, KPI strip, **Marimekko and drilldown**, trends and detail (Section B); allowed / paid / consumer spend | ✅ |
 | 4 | Scenario engine: assumptions, hierarchical resolution, validation, ledger, bridge. Builder dialog. Compare mode | ⏳ |
 | 4b | Ownership and value capture: integrated org, owned asset routing, consolidation | ⏳ |
 | 5 | Sankey with per-dimension granularity, roll-ups, threshold; flow inspector; table view | ⏳ |
@@ -81,15 +81,45 @@ assumptions.
 | Manufacturer | 236 / 46.9 / 19.9% | 322 / 65.6 / 20.3% | — |
 | Health Services | 28 / 2.6 / 9.2% | 39 / 3.7 / 9.4% | — |
 
-## Phase 3: shell, design system, Marimekko ⏳
+## Phase 3: shell, design system, Marimekko ✅
 
-**Acceptance:**
-* `streamlit run app.py` renders the shell, the global bar (including the dataset toggle), the KPI strip and
-  the hero Marimekko.
-* Drilldown and breadcrumbs work through `on_select` and the synchronized selector.
-* Tooltips show provenance and missing-margin hatching.
-* Section B trends follow the selection.
-* Screenshots are reviewed at 1440px.
+**Model addition (user request): allowed vs paid vs consumer spend**
+* `FACT_VALUE_FLOWS.PAID_AMOUNT`. Payer `CLAIMS_EXPENSE` is paid, alongside `ALLOWED_SPEND`, `ALLOWED_PMPM` and `PAID_PMPM`.
+* The uninsured are all self-pay. Supplemental payments are fully program-paid.
+* The engine carries paid and consumer amounts per flow, plus flow-level gain attribution.
+* Views take `basis ∈ {allowed, paid, consumer}`.
+* The `member_cost_share` driver is catalogued for Phase 4.
+
+**Deliverables:**
+* `app.py` and `modules/registry.py`: platform shell with the module registry; only working modules are listed.
+* `design/`: tokens (single source), CSS and Plotly template, number formatting, HTML components.
+* `charts/marimekko.py`: true variable-width Marimekko as one bar trace with native click selection,
+  diverging margin fill, hatching for missing margins, and "est." labels for top-down pools.
+* `charts/trends.py`: trend lines with a forecast band and a composition area chart.
+* `shell/`: namespaced session state, cached data and engine, sidebar, and a sticky wrapping global bar
+  (dataset, year, geography, scope, scenario status).
+* `modules/profit_pools/page.py`:
+  * **A.** KPIs, toolbar (breadcrumb, segment by, spend basis), Marimekko, legend and coverage notes,
+    synchronized selector, drill actions.
+  * **B.** Trends (revenue, gain or margin), composition, what-drove-the-change table, and an inspector
+    (provenance badges, metrics, revenue by funding source with consumer share, methodology panels).
+  * **E.** Summary table.
+* `tests/test_app.py`: 42 AppTest smoke tests across every control combination, drill level and selection
+  flow.
+
+**Acceptance (met):**
+* Opens to the all-pools Marimekko with KPIs.
+* Click a tile, then the outline, synchronized selector, inspector and drill buttons all update.
+* Drill into a column, then return via the breadcrumb (previous scope stays selected).
+* Segment by sub-pools, geography or funding source. Spend basis allowed, paid or consumer.
+* The dataset toggle hides market-only pools.
+* Missing margins are hatched with coverage notes. Unavailable pools are listed with reasons.
+* Reviewed in Chromium screenshots at 1440px and 1024px (controls wrap rather than clip).
+
+**Known limits (by design, until later phases):**
+* The scenario chip is a static "Baseline · no scenario" indicator (Phase 4).
+* There is no Export menu yet (Phase 7), so nothing is shown rather than a dead control.
+* Driver attribution covers baseline year-over-year change only.
 
 ## Phase 4: scenario engine and builder ⏳
 
@@ -154,5 +184,6 @@ assumptions.
 | 2026-10-18 | **Revised (user):** PBM Services moves under Pharmacy (top-down, Marimekko only, no flows). Hierarchy depth: Payer and Manufacturer L1–L2, Health Services L1–L3, Provider and Pharmacy ≤ L4. |
 | 2026-10-18 | Enterprise recipient gain uses the pool's market margin: profit associated with enterprise members, not enterprise profit. |
 | 2026-10-18 | Market and enterprise drivers are independent in the engine. Benchmarks are applied when the data is built, not re-linked during scenarios. |
+| 2026-10-18 | **Revised (user):** allowed vs paid. Payer claims = paid. Recipient revenue = allowed. Consumer spend = allowed − paid, viewable through a spend-basis control. |
 | 2026-10-18 | Overlapping assumptions compound by default. `override` mode replaces broader assumptions (pending user confirmation). |
 | 2026-10-18 | PPTX via python-pptx native charts and shapes. No Kaleido or Chrome dependency. |

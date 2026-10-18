@@ -21,7 +21,7 @@ Track progress in BUILD_PLAN.md and update it at the end of every phase.
     `provider_margin` assumption changes it. There is no cost-structure model.
   * Payers: gain = revenue − claims − residual opex. Residual opex is derived. Its PMPM is held constant in
     scenarios, with optional user-entered volume scaling.
-  * Allowed spend = payer claims outflow = provider receipt (cost-sharing caveat documented).
+  * Recipient revenue = allowed; payer claims expense = paid; consumer spend = allowed − paid.
   * Volume is a single "instances" count, on provider categories only and never pharmacy. Utilization changes
     are user estimates.
   * Top-down pools (Manufacturer, Health Services, PBM Services) have no LOB, geography or flow detail.
@@ -58,14 +58,16 @@ Track progress in BUILD_PLAN.md and update it at the end of every phase.
 pip install -r requirements.txt
 python -m pytest
 python -m profit_pools.core.data.synthetic     # dataset summary + validation (both datasets)
-streamlit run app.py                           # from Phase 3
+streamlit run app.py
+python -m pytest tests/test_app.py               # UI smoke tests (AppTest), slower
 ```
 
 ## Design
 
 Follow DESIGN_SYSTEM.md. Tokens come only from `design/tokens.py`. Use hairlines, not cards. Use one teal
 accent. Margin colors use the diverging red–gray–teal scale anchored at 0%. Missing data gets a hatch.
-Never use a dual-axis chart. Check every visual change at 1440px with a screenshot before calling it done.
+Never use a dual-axis chart. Check every visual change at 1440px and 1024px with a screenshot before calling it done.
+Streamlit hot-reloads only `app.py`. Restart the server after editing imported modules.
 
 ## Streamlit compatibility
 

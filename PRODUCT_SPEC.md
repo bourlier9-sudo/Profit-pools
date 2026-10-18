@@ -62,8 +62,12 @@ There is no separate page for assumptions. The assumption builder opens from the
    Gain = revenue × operating margin. The margin is constant unless explicitly assumed. Remaining expense is a
    derived residual. In the Enterprise view, recipient revenue is the enterprise's own claims spend with the
    pool, valued at the pool's market margin.
-4. **Allowed spend** is both the payer's modeled claims outflow and the provider's receipt. That allowed
-   amounts include member cost sharing is a documented caveat.
+4. **Allowed vs paid vs consumer spend.**
+   * Provider and pharmacy revenue = **allowed** (everything received).
+   * Payer claims expense = **paid**.
+   * **Consumer spend** = allowed − paid (member cost sharing and self-pay; the uninsured are all self-pay).
+   * A *spend basis* control (Allowed / Payer-paid / Consumer) applies to every flow-based view. Payer and
+     top-down pools have no split and are reported as unavailable on the paid and consumer bases.
 5. **Service volume** is a single **instance** count on provider categories where available, never pharmacy.
    Allowed = instances × average allowed per instance. Utilization changes are user-entered assumptions,
    and neither utilization nor price changes margin.
