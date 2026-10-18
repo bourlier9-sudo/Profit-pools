@@ -173,14 +173,31 @@ Negative numbers use a true minus (−), not a hyphen. Unavailable values render
 * **Compare mode:** a toggle between Scenario and Δ vs Baseline. In Δ mode, colors encode the margin change
   in pp (diverging), and the widths still show scenario revenue.
 
-### Sankey
-* Height 560. Nodes are 14 wide with 10 padding.
-* Node color = layer identity. Link color = source hue at 35%.
-* Columns depend on the selected layers, for example LOB group → LOB → spending category → recipient
-  pool → recipient leaf.
-* Flows below the threshold fold into "Other (n flows)" per column and are reconciled: the totals are
-  unchanged.
-* There is always a table view, in a toggle next to the chart.
+### Sankey (Section C, "Value flows")
+* Height scales with the largest column, from 460 to 900. Nodes are 14 wide with 12 padding, and node
+  labels read "Name  $XB".
+* **Node colours:**
+  * Payer LOB groups use steps of the payer hue: Commercial `#1F6FB2`, MA `#3F8BCB`, Medicaid `#76A9DA`.
+    LOBs inherit their group's colour.
+  * Government FFS, uninsured and supplemental use neutral greys. Consumers use slate `#5E6B78`, and
+    "Other" uses `#B8C0C8`.
+  * Recipients use their layer identity colour.
+* **Link colours:**
+  * Default: the source hue at 32% opacity.
+  * Recipient-gain metric: negative links are red, drawn at |value|.
+  * Compare: diverging by % change vs baseline (±10% = full colour).
+  * The selected node or link is drawn at 75% opacity.
+* **Controls**, in one wrapping row:
+  * Metric (Allowed / Payer-paid / Consumer / Recipient gain).
+  * Sources (Groups / Detail / Groups → detail).
+  * Recipient detail slider (Layer … Level 4) and a Layer column toggle.
+  * Consumers-as-a-source toggle.
+  * A "Filters & detail" popover: expand pools, source filter, recipient filter, and the "Other" threshold.
+  * A Sankey / Table switch.
+* Notes under the chart state the grand total ("every column sums to this total"), the revenue composition,
+  and any folding.
+* **Flow table and inspector:** the flow table (7/12) with single-row selection, and the inspector (5/12)
+  with a node selector. The table always reconciles to the chart.
 
 ### Trends
 * Line charts with 2px lines and 8px markers at the selected year only.

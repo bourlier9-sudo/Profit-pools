@@ -17,4 +17,4 @@ lobs:
   - {id: MA_SNP, label: Special Needs Plans, group: MCR}
   - {id: MCD_TANF, label: TANF / CHIP, group: MCD}
   - {id: MCD_EXP, label: Expansion Adults, group: MCD}
-  - {id: MCD_ABD, label: Aged, Blind & Disabled, group: MCD}
+  - {id: MCD_ABD, label: "Aged, Blind & Disabled", group: MCD}

@@ -10,7 +10,7 @@ Status legend: ✅ done · 🔄 in progress · ⏳ planned
 | 3 | App shell, design system, KPI strip, **Marimekko and drilldown**, trends and detail (Section B); allowed / paid / consumer spend | ✅ |
 | 4 | Scenario engine: assumptions, hierarchical resolution, validation, ledger, bridge. Builder dialog. Compare mode | ✅ |
 | 4b | Ownership and value capture: integrated org, owned asset routing, consolidation | ⏳ |
-| 5 | Sankey with per-dimension granularity, roll-ups, threshold; flow inspector; table view | ⏳ |
+| 5 | Sankey with per-dimension granularity, roll-ups, threshold; flow inspector; table view | ✅ |
 | 6 | Growth and CAGR section, baseline vs scenario, driver waterfall | ⏳ |
 | 7 | Exports: CSV, scenario JSON import/export, HTML snapshot, PPTX | ⏳ |
 | 8 | Visual polish at 1440px, responsiveness, performance, end-to-end consistency tests | ⏳ |
@@ -161,13 +161,34 @@ funding sources (group "Government-managed (FFS)"), replaces the single "traditi
 * The bridge sums to the total change.
 * The builder flow was verified in Chromium: load example → apply → compare.
 
-## Phase 5: Sankey ⏳
+## Phase 5: Sankey ✅
 
-**Acceptance:**
-* Granularity is independent for LOB, recipient and category.
-* Roll-ups and the "Other" threshold preserve totals (tested).
-* The inspector shows the attribution method and Δ.
-* The table view matches the chart.
+**Deliverables:**
+* `model/flows_view.py`: configurable Sankey views, including:
+  * source group and/or detail columns;
+  * an optional recipient-layer column;
+  * recipient depth 0–4 with per-node expansion;
+  * source and recipient filters, and an "Other" threshold;
+  * the consumer split, and a recipient-gain metric;
+  * node and link inspector facts, and compare deltas.
+* `charts/sankey.py`: identity colours; Δ-coloured links in Compare; red loss links for the gain metric;
+  selection highlight.
+* `modules/profit_pools/flows_section.py`: Section C with controls, the Sankey or table, reconciliation notes,
+  a selectable flow table, a node selector and the inspector (source/destination, shares, allowed, paid and
+  consumer, attributed gain and margin, enrollment and PMPM, instances, pool economics, method, roll-up
+  contents, Δ vs baseline).
+* Config fix: the "Aged, Blind & Disabled" label was split by an unquoted comma in YAML. A guard test now
+  catches stray keys.
+* Tests: 127 view tests across a grid of configurations, plus 10 UI tests. **343 tests total.**
+
+**Acceptance (met):**
+* Every column sums to the same total under every configuration, and links equal node values.
+* Allowed equals recipient revenue.
+* Paid + consumer = allowed.
+* Folding, expansion and filters reconcile.
+* Gain matches recipient gain.
+* The table selection drives the inspector, verified in Chromium.
+* Compare colouring follows the scenario (Commercial and MA up, Medicaid down in the example).
 
 ## Phase 6: growth ⏳
 

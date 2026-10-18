@@ -103,7 +103,8 @@ There is no separate page for assumptions. The assumption builder opens from the
 * Sources are payer segments plus, in the market view, the uninsured, government-managed FFS (Medicare FFS, Medicaid FFS), and
   supplemental payments. Top-down pools, including PBM Services, never appear in flows.
 
-* Users choose the visible layers or columns.
+* Users choose the visible columns: source groups and/or detail, an optional recipient layer, and recipient
+  depth with per-pool expansion. Consumer spend can be shown as its own source.
 * Granularity is set **independently per dimension**: payer LOB (all / group / individual LOB), provider
   category (layer / pool / leaf), and spending category.
 * Users can filter LOBs and recipients, set a minimum-flow threshold with an "Other" roll-up, and choose a

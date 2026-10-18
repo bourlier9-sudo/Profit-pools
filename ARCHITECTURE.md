@@ -34,13 +34,15 @@ profit_pools/
       resolve.py                          scope matching, specificity, replace/stack resolution, conflicts ✅ Phase 4
       scenario_engine.py                  validation, stage-ordered application, shifts, growth rates,
                                           ledger, bridge (sequential attribution), preview               ✅ Phase 4
+      flows_view.py                       Sankey views: configurable columns, expansion, filters, "Other" folding,
+                                          consumer split, gain metric, node/link inspector facts, compare Δ  ✅ Phase 5
       growth.py                           growth decomposition (CAGR helper lives in views.py)
     export/           (Phase 7)           csv, scenario_json, html_snapshot, pptx_summary
   design/                                 tokens.py · theme.py (CSS + Plotly template) · format.py · components.py   ✅
-  charts/                                 marimekko.py · trends.py ✅ · sankey.py, waterfall.py (Phases 5–6)
+  charts/                                 marimekko.py · trends.py · sankey.py ✅ · waterfall.py (Phase 6)
   shell/                                  state.py (pp.* keys) · data.py (cached adapter/engine/scenario runs) ·
                                           layout.py · scenario_builder.py (dialog)                                   ✅
-  modules/                                registry.py + profit_pools/page.py (sections A, B, E-table)               ✅
+  modules/                                registry.py + profit_pools/page.py (A, B, E) + flows_section.py (C)       ✅
 tests/
 ```
 
@@ -295,6 +297,30 @@ Geography semantics:
 | national | everything |
 | state | excludes national-only pools, which are reported as unavailable |
 | county | payer rows and county-grain recipient rows; excludes state-level supplemental payments (noted) and top-down pools; recipient gain uses the state pool margin |
+
+## 7b. Value flows (`model/flows_view.py`)
+
+`build(result, meta, dataset, year, geo, SankeyConfig)` → `SankeyView(columns, nodes, links, total, detail)`.
+
+* **Columns:**
+  * `source_group` (LOB group, funding group or stand-alone source);
+  * `source_detail` (LOB or funding source);
+  * `recipient_layer`;
+  * `recipient` (taxonomy depth 0–4, with any nodes **expanded** further).
+* **Metric:** allowed, paid, consumer, or recipient gain (flow × target pool margin).
+  `split_consumer` moves member cost sharing and self-pay out of every source into one "Consumers" source.
+* **Filters and folding:**
+  * Source and recipient filters.
+  * Nodes below `min_share` fold into an "Other (n)" node per column, which keeps its member list.
+* **Reconciliation:** every column sums to the same total, link sums equal node values, and allowed equals
+  recipient revenue for the same geography (tested across a grid of configurations).
+* **Inspection:**
+  * `link_detail` and `node_detail` give values, shares, paid/consumer, attributed gain and implied margin,
+    enrollment and PMPM (payer sources only), instances and allowed per instance (only when every underlying
+    flow has instances), pool economics, attribution method, and roll-up members.
+  * `compare_links` gives the scenario − baseline Δ per link.
+* **Selection:** Streamlit returns no Sankey click events. Selection is synchronized through the flow table
+  (row selection) and a node selector instead.
 
 ## 8. Performance and state
 

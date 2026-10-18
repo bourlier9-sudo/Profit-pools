@@ -32,6 +32,7 @@ Track progress in BUILD_PLAN.md and update it at the end of every phase.
   Equal-specificity overlaps are blocking errors. Only `stack` compounds.
 * Streamlit: anything that replaces widget-backed session state must run in an `on_click`/`on_change`
   callback, never after the widget is drawn. Escape `$` in markdown (it renders as LaTeX).
+* YAML flow mappings: quote any label containing a comma (`label: "Aged, Blind & Disabled"`).
 * **Null = unavailable, not zero.** Propagate it. Show coverage. Never fill with 0 in aggregation without
   also reporting coverage.
 * **No dead controls.** If a control cannot produce a valid result (an export, a selection, a driver), hide

@@ -137,3 +137,55 @@ def test_chip_label_reflects_state(app, example):
     app.session_state[S.K_DRAFT] = example
     app.run()
     assert [b.label for b in app.button if b.key == "pp.chip"][0] == "Illustrative scenario · 5 changes"
+
+
+# --- value flows (Sankey) --------------------------------------------------------
+
+@pytest.mark.parametrize("metric", ["allowed", "gain"])
+@pytest.mark.parametrize("sources", ["group", "both"])
+@pytest.mark.parametrize("show", ["chart", "table"])
+def test_flows_section_renders(app, metric, sources, show):
+    app.session_state[S.K_APPLIED] = None
+    app.session_state[S.K_VIEW] = "baseline"
+    app.session_state[S.K_DATASET] = "MARKET"
+    app.session_state[S.K_YEAR] = 2025
+    app.session_state[S.K_GEO] = "US"
+    app.session_state["pp.sk.metric"] = metric
+    app.session_state["pp.sk.sources"] = sources
+    app.session_state["pp.sk.show"] = show
+    app.session_state["pp.sk.expand"] = ["PRV_HOSP"]
+    app.session_state["pp.sk.sel"] = ("node", "recipient:PRV_HOSP_ACUTE")
+    app.run()
+    _ok(app)
+    md = " ".join(x.value for x in app.markdown)
+    assert "Value flows" in md and "every column sums to this total" in md
+    assert "Pool revenue (all funders)" in md        # node inspector rendered
+
+
+def test_flows_link_inspector_and_compare(app, example):
+    app.session_state[S.K_APPLIED] = example
+    app.session_state[S.K_DRAFT] = example
+    app.session_state[S.K_VIEW] = "compare"
+    app.session_state[S.K_YEAR] = 2030
+    app.session_state["pp.sk.metric"] = "allowed"
+    app.session_state["pp.sk.sources"] = "group"
+    app.session_state["pp.sk.expand"] = []
+    app.session_state["pp.sk.depth"] = 1
+    app.session_state["pp.sk.sel"] = ("link", "source_group:COMM", "recipient:PRV_HOSP")
+    app.run()
+    _ok(app)
+    md = " ".join(x.value for x in app.markdown)
+    assert "Commercial → Hospitals" in md and "Δ vs baseline" in md and "Allowed PMPM (this flow)" in md
+
+
+def test_flows_enterprise_and_county(app):
+    app.session_state[S.K_APPLIED] = None
+    app.session_state[S.K_DATASET] = "ENTERPRISE"
+    app.session_state[S.K_GEO] = "NVL-01"
+    app.session_state["pp.sk.consumer"] = True
+    app.session_state["pp.sk.sel"] = None
+    app.run()
+    _ok(app)
+    app.session_state[S.K_DATASET] = "MARKET"
+    app.session_state[S.K_GEO] = "US"
+    app.session_state["pp.sk.consumer"] = False

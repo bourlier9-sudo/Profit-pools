@@ -16,6 +16,7 @@ from profit_pools.design import components as ui
 from profit_pools.design import format as fmt
 from profit_pools.design.theme import PLOTLY_CONFIG
 from profit_pools.design.tokens import FUNDING_COLOR, LAYER_COLOR
+from profit_pools.modules.profit_pools.flows_section import section_flows
 from profit_pools.shell import data, layout
 from profit_pools.shell import state as S
 
@@ -211,7 +212,8 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -
     st.markdown(ui.page_header("Profit Pools Explorer",
                                f"{ds.label} · {yr} · {_geo_text(meta, geo)} · fictional data, for illustration only"),
                 unsafe_allow_html=True)
-    st.markdown(ui.section_nav([("overview", "Overview"), ("trends", "Trends & detail"), ("detail", "Summary table")]),
+    st.markdown(ui.section_nav([("overview", "Overview"), ("trends", "Trends & detail"), ("flows", "Value flows"),
+                                ("detail", "Summary table")]),
                 unsafe_allow_html=True)
     st.markdown('<div id="overview"></div>', unsafe_allow_html=True)
     if f.view != "baseline":
@@ -551,4 +553,5 @@ def render() -> None:
     section_overview(result, meta, f, geo, cmp)
     f = S.Filters(**{**S.current().__dict__, "view": f.view})
     section_trends(result, meta, f, geo, cmp)
+    section_flows(result, meta, f, geo, cmp)
     section_table(result, meta, f, geo, cmp)

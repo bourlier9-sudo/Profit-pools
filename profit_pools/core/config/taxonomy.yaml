@@ -48,7 +48,7 @@ layers:
         children:
           - {id: PAY_MCD_TANF, label: TANF / CHIP, short_label: TANF/CHIP, lob: MCD_TANF}
           - {id: PAY_MCD_EXP, label: Expansion Adults, short_label: Expansion, lob: MCD_EXP}
-          - {id: PAY_MCD_ABD, label: Aged, Blind & Disabled, short_label: ABD, lob: MCD_ABD}
+          - {id: PAY_MCD_ABD, label: "Aged, Blind & Disabled", short_label: ABD, lob: MCD_ABD}
 
   - id: PROVIDER
     label: Provider

@@ -1,6 +1,6 @@
 import pytest
 
-from profit_pools.core.taxonomy import Taxonomy, TaxonomyError, build_metadata
+from profit_pools.core.taxonomy import Taxonomy, TaxonomyError, build_metadata, default_metadata
 
 
 def test_layers_in_config_order(meta):
@@ -150,3 +150,25 @@ def test_methodology_text_covers_every_dataset(meta):
     for ds in meta.datasets:
         assert text["provider_revenue"][ds].strip()
     assert "instances" in text["provider_revenue"]["volume"]
+
+
+def test_config_has_no_stray_keys_from_unquoted_commas():
+    """`{label: A, B}` in YAML flow style silently creates a key 'B'; catch it."""
+    from profit_pools.core.config import load_config
+
+    allowed = {"id", "label", "short_label", "lob", "children", "economics", "coverage", "geo_level",
+               "receives_flows", "description"}
+
+    def walk(n):
+        yield n
+        for c in n.get("children") or []:
+            yield from walk(c)
+
+    for layer in load_config("taxonomy")["layers"]:
+        for n in walk(layer):
+            assert set(n) <= allowed, (n["id"], set(n) - allowed)
+    for lob in load_config("lobs")["lobs"]:
+        assert set(lob) == {"id", "label", "group"}, lob
+    for c in load_config("spending_categories")["claims_categories"]:
+        assert set(c) == {"id", "label", "target", "instances"}, c
+    assert default_metadata().lobs.lobs["MCD_ABD"].label == "Aged, Blind & Disabled"

@@ -90,6 +90,12 @@ def margin_color(margin: float | None) -> str:
 DELTA_MARGIN_CLAMP = 0.02  # ±2 pp
 
 
+def diverging(t: float) -> str:
+    """Position t ∈ [−1, 1] on the shared red–neutral–teal scale (0 = neutral)."""
+    t = max(-1.0, min(1.0, t))
+    return margin_color(t * (-MARGIN_MIN if t < 0 else MARGIN_MAX))
+
+
 def delta_margin_color(d: float | None) -> str:
     """Change in margin (fraction) on the same diverging palette, clamped at ±2 pp."""
     if d is None or d != d:
