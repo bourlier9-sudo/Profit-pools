@@ -30,14 +30,16 @@ profit_pools/
       cube.py                             facts → driver cube (history) + baseline forecast projection   ✅ Phase 2
       engine.py                           staged pipeline → ModelResult                                   ✅ Phase 2
       views.py                            ModelResult → roll-ups / series / totals (filter + sum only)    ✅ Phase 2
-      scenario.py                         Scenario / Assumption dataclasses, schema v1, JSON (de)serialization, validation
-      resolve.py                          hierarchical scope matching, precedence, conflict detection
-      ledger.py                           per-assumption lineage + sequential attribution bridge
+      scenario.py                         Scenario / Assumption dataclasses, schema v1, JSON round-trip   ✅ Phase 4
+      resolve.py                          scope matching, specificity, replace/stack resolution, conflicts ✅ Phase 4
+      scenario_engine.py                  validation, stage-ordered application, shifts, growth rates,
+                                          ledger, bridge (sequential attribution), preview               ✅ Phase 4
       growth.py                           growth decomposition (CAGR helper lives in views.py)
     export/           (Phase 7)           csv, scenario_json, html_snapshot, pptx_summary
   design/                                 tokens.py · theme.py (CSS + Plotly template) · format.py · components.py   ✅
   charts/                                 marimekko.py · trends.py ✅ · sankey.py, waterfall.py (Phases 5–6)
-  shell/                                  state.py (pp.* keys) · data.py (cached adapter/engine) · layout.py         ✅
+  shell/                                  state.py (pp.* keys) · data.py (cached adapter/engine/scenario runs) ·
+                                          layout.py · scenario_builder.py (dialog)                                   ✅
   modules/                                registry.py + profit_pools/page.py (sections A, B, E-table)               ✅
 tests/
 ```
@@ -71,7 +73,7 @@ The engine's only input is a **driver cube** at the finest grain:
 |---|---|---|
 | `payer` | dataset × year × county × payer leaf | `members`, `premium_pmpm`, `opex_pmpm` (derived residual) |
 | `spend` | … × source (payer leaf or funding source) × category | `allowed_pmpm` (per member or person of the source), `paid_ratio` (paid ÷ allowed), `inst_per_member` (where instances exist) |
-| `population` | dataset × year × county × funding source | `population` (uninsured, traditional Medicare & public) |
+| `population` | dataset × year × county × funding source | `population` (uninsured, government-managed FFS (Medicare FFS, Medicaid FFS)) |
 | `supplemental` | dataset × year × state × funding source × hospital leaf | `amount` |
 | `recipient_margin` | dataset × year × state × recipient leaf | `margin` (NaN = unavailable) |
 | `top_down` | dataset × year × leaf (national) | `revenue`, `margin` |
@@ -125,75 +127,90 @@ How changes propagate (always through drivers):
   the margin hits target. They never cross-apply.
 * **Growth +1 pp:** compounds into every later year, and therefore into the CAGRs.
 
-### 6.1 Assumption model
+### 6.1 Assumption model (`model/scenario.py`)
 
 ```python
 Assumption(
-  id, label, driver,                 # driver ∈ drivers.yaml
-  method,                            # pct | pp | set | delta
-  value,                             # 0.05 = +5% (pct) or +5 pp (pp)
-  mode,                              # "adjust" (incremental) | "override"
+  id, label, notes, enabled,
+  driver,                        # drivers.yaml → drivers or growth_drivers
+  method,                        # pct | pp | set | delta   (0.05 = +5% or +5 pp)
+  value,
+  mode="replace",                # replace (default: overlaps conflict) | stack (compounds)
+  target=None,                   # enrollment_shift destination: payer leaf or population funding source
   scope=Scope(
-    dataset=None | "MARKET" | "ENTERPRISE",   # None = both
-    node_id,                         # ANY taxonomy node: layer, pool or leaf
-    funding_sources=None | [ids],    # spending/funding drivers: restrict to uninsured / public / supplemental
-    lobs=None | [LOB or LOB-group ids],
-    payer_node_id=None,              # spending drivers only: restrict by originating payer node
-    geography=None | [state / county ids],
-    years=YearRange(start, end|None),  # end None = "onward"
-  ),
-  enabled=True, notes="")
-Scenario(id, name, description, base_year, schema_version, assumptions: list[Assumption])
+    years=YearRange(start, end|None),   # end None = "onward"
+    dataset=None | "MARKET" | "ENTERPRISE",
+    node_id=None | any taxonomy node,   # layer, pool or leaf; None = every eligible node
+    sources=(),                  # LOB, LOB-group, funding-source or funding-group ids
+    geography=(),                # state and/or county ids
+  ))
+Scenario(id, name, description, base_year, schema_version=1, assumptions: tuple[Assumption, ...])
 ```
 
-Year semantics: a **level** assumption applies to the years in its range only. A **growth** assumption
-changes annual rates within its range, and the effect compounds into later years. The UI states which
-of the two the user has chosen.
+* Scenario JSON holds configuration only. Import rejects unknown schema versions and malformed structure.
+* `content_hash()` keys the cache.
+* **Year semantics:**
+  * A **level** assumption changes its driver in the years in range only. Use "onward" for persistence.
+  * A **growth** assumption (forecast years only) changes annual rates, and the effect compounds into
+    later years.
+* **Set / add totals** on additive drivers (enrollment, population, supplemental, top-down revenue) are
+  distributed over the matched cells in proportion to their level, per dataset-year. They must name a single
+  dataset.
 
-### 6.2 Hierarchical scope resolution (deterministic)
+### 6.2 Hierarchical scope resolution (`model/resolve.py`)
 
-An assumption *matches* a driver cell when the cell's leaf descends from `scope.node_id` (or is it), its LOB
-is in `scope.lobs` (LOB groups expand to their LOBs), its geography is inside `scope.geography` (a state matches
-its counties), and its year is in range.
+An assumption *matches* a cell when all of these hold:
+* the cell's leaf descends from `scope.node_id`;
+* its payer LOB or funding source is in `scope.sources` (groups expand);
+* its state or county is in `scope.geography`;
+* its dataset matches;
+* its year is in range.
 
-**Specificity** of a scope is the tuple `(node depth, LOB / funding-source specificity, geo specificity,
-dataset specificity)`, compared lexicographically:
+**Specificity** is `(taxonomy depth, source specificity, geo specificity, dataset specificity)`, compared
+lexicographically:
 
-* LOB specificity: all = 0, group = 1, LOB = 2.
-* Geo specificity: national = 0, state = 1, county = 2.
-* Dataset specificity: both = 0, one dataset = 1.
+* Sources: none = 0, groups only = 1, any specific LOB or source = 2.
+* Geography: national = 0, states = 1, any county = 2.
+* Dataset: both = 0, one = 1.
 
-Hierarchy depth comes from the taxonomy, so nothing is hardcoded.
+Depth comes from the taxonomy, so nothing is hardcoded. Year ranges add no specificity.
 
-For each cell and driver, with M = the matching enabled assumptions in list order:
+**Rule: overlapping assumptions conflict by default** (user decision, 2026-10-18). For each driver and each
+cell:
 
-1. **No overrides in M:** apply every adjustment in list order. `pct` compounds multiplicatively and
-   `pp`/`delta` add. If M mixes multiplicative and additive methods, the cell is flagged *order-sensitive*.
-2. **Overrides in M:**
-   * The most specific override wins. A tie goes to the later one and is reported as a **conflict**.
-   * The override value replaces the baseline driver level (`set`), or applies to the baseline (`pct`/`pp`).
-   * Adjustments **less specific** than the winning override are **superseded** on that cell and reported.
-   * Adjustments **equally or more specific** apply on top, in list order.
+1. Among `replace` assumptions (the default), the **most specific wins**. Broader ones are **superseded** on
+   those cells, reported as a warning, and the ledger marks them *partly* or *fully superseded*.
+2. Equally specific `replace` assumptions that overlap on the same cells are a **blocking conflict**. Apply
+   stays disabled until a scope or year range is narrowed, one is disabled, or one is set to `stack`.
+3. `stack` assumptions compound on top of whatever applies, in list order (`pct` multiplies, `pp` and `delta`
+   add). Mixing % and additive stacks is flagged as *order-sensitive*. `set` cannot be stacked.
+4. Different drivers never conflict. When `allowed_pmpm` and `utilization` or `unit_price` overlap they
+   multiply, with a warning.
 
-Worked example (allowed spend, Psychiatric Hospital cells):
+Worked example (allowed spend, payer claims):
 
-| Assumptions | Psych result | Other hospitals | Other providers |
+| Assumptions | Psych hospitals | Other hospitals | Other providers |
 |---|---|---|---|
-| Provider +5% (adjust), Hospital +8% (adjust), Psych +12% (adjust) | ×1.05×1.08×1.12 = **+27.0%** | +13.4% | +5% |
-| Same, but Psych +12% is **override** | **+12.0%** (Provider and Hospital superseded on Psych cells) | +13.4% | +5% |
+| Provider +5%, Hospital +8%, Psych +12% (all replace, the default) | **+12%** (Provider and Hospital superseded there) | **+8%** | +5% |
+| Same, with Hospital and Psych set to **stack** | ×1.05×1.08×1.12 = **+27.0%** | +13.4% | +5% |
+| Two "Commercial enrollment" assumptions, 2026–28 and 2028–30 (both replace) | ⛔ conflict in 2028; fix before applying | | |
 
 **Validation** (blocking errors vs warnings):
 
 * Errors block apply:
+  * Equally specific overlapping `replace` assumptions (conflict).
+  * Totals without a single dataset; funding-source or top-down assumptions scoped to the enterprise
+    dataset; growth assumptions in history years; county scopes on state-level margins.
   * The driver isn't eligible for the node's economics, e.g. `provider_margin` on a payer or `utilization`
     on a category without instance data, such as any pharmacy category.
   * The scope matches no data.
   * The result is invalid: negative enrollment or PMPM, margin ≥ 100%.
   * An `enrollment_shift` would push a source segment below zero.
-* Warnings: conflicts, superseded adjustments, order-sensitive cells, scopes that partially fall on
+* Warnings: superseded assumptions, order-sensitive stacks, compounding spend drivers, margin pp changes on
+  cells without margin data, shifts whose destination is absent in some counties, scopes that partially fall on
   unavailable data.
 
-**Preview** (`engine.preview(scenario, assumption)`) returns:
+**Preview** (`scenario_engine.preview(hist, meta, scenario, assumption_id, year, dataset)`) returns:
 
 * matched leaves (descendants listed),
 * the LOBs, geographies and years matched,
@@ -207,7 +224,7 @@ It runs the pipeline with the assumption and without it.
 
 * Assumptions only change drivers. Each driver is consumed by exactly one stage.
 * Recipient revenue is *only* Σ inflows. Every inflow has a named source: a payer segment, uninsured,
-  traditional Medicare & public, or supplemental. There is no plug that could silently absorb a change.
+  government-managed FFS (Medicare FFS, Medicaid FFS), or supplemental. There is no plug that could silently absorb a change.
   A spending assumption changes the inflow once, and the recipient sees it through the flow, never through
   a second adjustment.
 * Payer margin and recipient margin are distinct drivers with disjoint eligible economics.
@@ -218,10 +235,12 @@ It runs the pipeline with the assumption and without it.
 * Ownership (Phase 4b): intra-organization flows are eliminated in the consolidated view. Consolidated gain
   = payer gain + owned-asset gain, and the elimination nets out of revenue and expense only.
 
-### 6.4 Lineage and the driver bridge
+### 6.4 Lineage and the driver bridge (`scenario_engine.py`)
 
-* `ledger.py` records, for each assumption: the cells touched, driver before and after, and Δ for every
-  derived metric. The "why did this change" inspector reads these entries.
+* `LedgerEntry` (per assumption) records the summary, cells matched, cells governed, and status (applied,
+  partly or fully superseded, conflict, invalid, no match). The builder shows it on each row.
+* The **bridge** gives the Δ revenue and Δ gain per assumption for any node, year, geography and basis.
+  The inspector ("Why it changed") and the compare table read it.
 * **Bridge:**
   * Run the pipeline cumulatively, enabling assumptions one at a time in list order.
   * Step *k* = result(1..k) − result(1..k−1).

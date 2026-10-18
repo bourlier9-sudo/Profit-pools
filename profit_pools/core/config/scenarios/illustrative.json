@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "example1",
+  "name": "Illustrative scenario",
+  "description": "Fictional example combining enrollment, price, margin, coverage-shift and growth assumptions.",
+  "base_year": 2025,
+  "assumptions": [
+    {"id": "ex-enr", "driver": "enrollment", "method": "pct", "value": 0.08, "mode": "replace", "enabled": true,
+     "label": "Commercial enrollment", "notes": "",
+     "scope": {"years": {"start": 2028, "end": 2031}, "dataset": "MARKET", "node_id": "PAY_COMM", "sources": [], "geography": []}},
+    {"id": "ex-price", "driver": "unit_price", "method": "pct", "value": 0.03, "mode": "replace", "enabled": true,
+     "label": "Hospital unit costs", "notes": "Price only; utilization unchanged.",
+     "scope": {"years": {"start": 2029, "end": null}, "dataset": null, "node_id": "PRV_HOSP", "sources": [], "geography": []}},
+    {"id": "ex-margin", "driver": "provider_margin", "method": "pp", "value": -0.01, "mode": "replace", "enabled": true,
+     "label": "Provider margin", "notes": "",
+     "scope": {"years": {"start": 2026, "end": null}, "dataset": null, "node_id": "PROVIDER", "sources": [], "geography": []}},
+    {"id": "ex-shift", "driver": "enrollment_shift", "method": "pct", "value": 0.05, "mode": "replace", "enabled": true,
+     "target": "FS_UNINSURED", "label": "Medicaid → uninsured", "notes": "Coverage loss after redeterminations.",
+     "scope": {"years": {"start": 2026, "end": null}, "dataset": "MARKET", "node_id": "PAY_MCD", "sources": [], "geography": []}},
+    {"id": "ex-growth", "driver": "enrollment_growth", "method": "pp", "value": 0.01, "mode": "replace", "enabled": true,
+     "label": "MA enrollment growth", "notes": "",
+     "scope": {"years": {"start": 2027, "end": null}, "dataset": null, "node_id": "PAY_MA", "sources": [], "geography": []}}
+  ]
+}

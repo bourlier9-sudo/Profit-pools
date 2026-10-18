@@ -216,6 +216,7 @@ class FundingSource:
     label: str
     short_label: str
     basis: str  # "population_pmpm" | "lump_sum"
+    group: str | None
     geo_level: str
     targets_under: tuple[str, ...]
     description: str
@@ -291,6 +292,7 @@ class Metadata:
     categories: dict[str, SpendingCategory]
     instance_unit: dict[str, str]
     funding_sources: dict[str, FundingSource]
+    funding_groups: dict[str, str]  # group id → label
     datasets: dict[str, Dataset]
     default_dataset: str
     geography: Geography
@@ -344,11 +346,15 @@ def build_geography(spec: Mapping[str, Any]) -> Geography:
                      {k: float(v) for k, v in spec["state_weights"].items()})
 
 
+def build_funding_groups(spec: Mapping[str, Any]) -> dict[str, str]:
+    return dict(spec.get("groups") or {})
+
+
 def build_funding_sources(spec: Mapping[str, Any]) -> dict[str, FundingSource]:
     return {
         f["id"]: FundingSource(
             id=f["id"], label=f["label"], short_label=f.get("short_label", f["label"]),
-            basis=f["basis"], geo_level=f["geo_level"],
+            basis=f["basis"], geo_level=f["geo_level"], group=f.get("group"),
             targets_under=tuple(f.get("targets_under") or ()), description=f.get("description", ""),
         )
         for f in spec["funding_sources"]
@@ -384,7 +390,9 @@ def build_metadata(
     lobs = build_lobs(lob_spec or load_config("lobs"))
     cat_spec = category_spec or load_config("spending_categories")
     categories = build_categories(cat_spec)
-    funding = build_funding_sources(funding_spec or load_config("funding_sources"))
+    f_spec = funding_spec or load_config("funding_sources")
+    funding = build_funding_sources(f_spec)
+    funding_groups = build_funding_groups(f_spec)
     datasets, default_ds = build_datasets(dataset_spec or load_config("datasets"))
     geography = build_geography(geography_spec or load_config("geography"))
     p = period_spec or load_config("periods")
@@ -408,6 +416,8 @@ def build_metadata(
     for fs in funding.values():
         if fs.basis not in ("population_pmpm", "lump_sum"):
             raise TaxonomyError(f"Funding source {fs.id}: unknown basis {fs.basis}")
+        if fs.group is not None and fs.group not in funding_groups:
+            raise TaxonomyError(f"Funding source {fs.id}: unknown group {fs.group}")
         for anc in fs.targets_under:
             if anc not in taxonomy:
                 raise TaxonomyError(f"Funding source {fs.id}: unknown target node {anc}")
@@ -421,7 +431,7 @@ def build_metadata(
             if f not in funding:
                 raise TaxonomyError(f"Dataset {ds.id}: unknown funding source {f}")
     return Metadata(taxonomy, max_levels, lobs, categories, dict(cat_spec["instance_unit"]),
-                    funding, datasets, default_ds, geography, periods)
+                    funding, funding_groups, datasets, default_ds, geography, periods)
 
 
 _DEFAULT: Metadata | None = None

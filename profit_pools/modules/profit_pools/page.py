@@ -9,6 +9,7 @@ import streamlit as st
 from profit_pools.charts import marimekko, trends
 from profit_pools.core.config import load_config
 from profit_pools.core.model import views as V
+from profit_pools.core.model.engine import ModelResult
 from profit_pools.core.model.views import Geo
 from profit_pools.core.taxonomy import Metadata
 from profit_pools.design import components as ui
@@ -60,18 +61,35 @@ def _provenance(meta: Metadata, dataset: str, node_id: str | None, year: int) ->
     return out
 
 
-def _delta(cur, prev, kind: str) -> str:
+def _delta(cur, prev, kind: str, vs: str = "vs prior year", money: bool = False) -> str:
     if prev is None or cur is None or not np.isfinite(prev) or not np.isfinite(cur):
-        return ui.delta_html("No prior-year comparison", None)
+        return ui.delta_html("No prior-year comparison" if vs == "vs prior year" else "—", None)
     if kind == "pp":
         d = cur - prev
-        return ui.delta_html(f"{fmt.pp(d)} vs prior year", 1 if d > 0 else -1 if d < 0 else 0)
+        return ui.delta_html(f"{fmt.pp(d)} {vs}", 1 if d > 0 else -1 if d < 0 else 0)
     if prev == 0:
         return ui.delta_html("—", None)
     d = cur / prev - 1
-    if prev < 0:  # growth rates against a negative base are not meaningful
-        return ui.delta_html(f"{fmt.money(cur - prev, signed=True)} vs prior year", 1 if cur > prev else -1)
-    return ui.delta_html(f"{fmt.pct(d, 1, signed=True)} vs prior year", 1 if d > 0 else -1 if d < 0 else 0)
+    if prev < 0 or money:  # growth rates against a negative base are not meaningful
+        extra = f" ({fmt.pct(d, 1, signed=True)})" if money and prev > 0 else ""
+        return ui.delta_html(f"{fmt.money(cur - prev, signed=True)}{extra} {vs}", 1 if cur > prev else -1 if cur < prev else 0)
+    return ui.delta_html(f"{fmt.pct(d, 1, signed=True)} {vs}", 1 if d > 0 else -1 if d < 0 else 0)
+
+
+def _as_result(pools, base_year: int) -> ModelResult:
+    """Wrap a bridge step's pools so the same views (which read only `pools`) can slice it."""
+    return ModelResult(pools=pools, flows=pd.DataFrame(), base_year=base_year)
+
+
+def _bridge_for(meta: Metadata, f: S.Filters, geo: Geo, node_id: str | None) -> list[tuple]:
+    """[(assumption, Δ revenue, Δ gain)] for one node — consecutive differences of the cached bridge."""
+    steps = data.scenario_bridge(S.applied().to_json())
+    vals = []
+    for a, pools in steps:
+        mtr = V.node_metrics(_as_result(pools, meta.periods.base_year), meta, f.dataset, f.year, node_id, geo, f.basis)
+        vals.append((a, 0.0 if mtr is None else float(mtr["revenue"]),
+                     0.0 if mtr is None or not np.isfinite(mtr["gain"]) else float(mtr["gain"])))
+    return [(vals[k][0], vals[k][1] - vals[k - 1][1], vals[k][2] - vals[k - 1][2]) for k in range(1, len(vals))]
 
 
 # ---------------------------------------------------------------------------
@@ -122,10 +140,14 @@ def _drill(node_id: str | None, keep_selected: tuple | None = None) -> None:
 # Section A — overview + Marimekko
 # ---------------------------------------------------------------------------
 
-def _kpis(result, meta, f: S.Filters, geo: Geo) -> None:
+def _kpis(result, meta, f: S.Filters, geo: Geo, cmp=None) -> None:
     cur = V.node_metrics(result, meta, f.dataset, f.year, f.focus, geo, f.basis)
-    prev = (V.node_metrics(result, meta, f.dataset, f.year - 1, f.focus, geo, f.basis)
-            if f.year - 1 >= meta.periods.history_start else None)
+    if cmp is not None:
+        prev, vs = V.node_metrics(cmp, meta, f.dataset, f.year, f.focus, geo, f.basis), "vs baseline"
+    else:
+        prev = (V.node_metrics(result, meta, f.dataset, f.year - 1, f.focus, geo, f.basis)
+                if f.year - 1 >= meta.periods.history_start else None)
+        vs = "vs prior year"
     if cur is None:
         st.markdown(ui.note("No data for this scope at the selected geography and spend basis."), unsafe_allow_html=True)
         return
@@ -137,27 +159,32 @@ def _kpis(result, meta, f: S.Filters, geo: Geo) -> None:
     if f.basis == "allowed":
         rev_label = "Gross revenue" if f.focus is None else "Revenue"
     margin_val = fmt.pct(cur["margin"])
-    margin_delta = _delta(cur["margin"], g(prev, "margin"), "pp")
+    margin_delta = _delta(cur["margin"], g(prev, "margin"), "pp", vs)
     if cur["margin_coverage"] < 0.9995:
         d = cur["margin"] - prev["margin"] if prev is not None else np.nan
         margin_delta = (ui.delta_html(fmt.pp(d), 1 if d > 0 else -1) if np.isfinite(d) else "") + ui.delta_html(
             f" · {fmt.pct(cur['margin_coverage'], 1)} covered", None)
     members = cur.get("members")
     if members is not None and np.isfinite(members) and members > 0:
-        enr = (fmt.members(members), _delta(members, g(prev, "members"), "pct"))
+        enr = (fmt.members(members), _delta(members, g(prev, "members"), "pct", vs))
     else:
         enr = (fmt.DASH, ui.delta_html("Payer pools only", None))
     s = V.node_series(result, meta, f.dataset, f.focus, geo, f.basis).set_index("year")
     b, e = meta.periods.base_year, meta.periods.forecast_end
     rev_cagr = V.cagr(s["revenue"].get(b), s["revenue"].get(e), e - b) if b in s.index and e in s.index else np.nan
     gain_cagr = V.cagr(s["gain"].get(b), s["gain"].get(e), e - b) if b in s.index and e in s.index else np.nan
+    cagr_note = f"Gain CAGR {fmt.cagr(gain_cagr)}"
+    if cmp is not None:
+        sb = V.node_series(cmp, meta, f.dataset, f.focus, geo, f.basis).set_index("year")
+        base_cagr = V.cagr(sb["revenue"].get(b), sb["revenue"].get(e), e - b) if b in sb.index and e in sb.index else np.nan
+        cagr_note = f"baseline {fmt.cagr(base_cagr)} · gain {fmt.cagr(gain_cagr)}"
     items = [
-        (rev_label, fmt.money(cur["revenue"]), _delta(cur["revenue"], g(prev, "revenue"), "pct")),
-        ("Operating gain", fmt.money(cur["gain"]), _delta(cur["gain"], g(prev, "gain"), "pct")),
+        (rev_label, fmt.money(cur["revenue"]), _delta(cur["revenue"], g(prev, "revenue"), "pct", vs, cmp is not None)),
+        ("Operating gain", fmt.money(cur["gain"]), _delta(cur["gain"], g(prev, "gain"), "pct", vs, cmp is not None)),
         ("Operating margin", margin_val, margin_delta),
         ("Enrollment", *enr),
         (f"Revenue CAGR {b}–{str(e)[2:]}", fmt.cagr(rev_cagr),
-         ui.delta_html(f"Gain CAGR {fmt.cagr(gain_cagr)}", None)),
+         ui.delta_html(cagr_note, None)),
     ]
     st.markdown(ui.kpi_strip(items), unsafe_allow_html=True)
     if f.focus is None and f.basis == "allowed":
@@ -178,7 +205,7 @@ def _breadcrumb(meta: Metadata, focus: str | None) -> None:
                 st.markdown('<span class="pp-crumb-sep">›</span>', unsafe_allow_html=True)
 
 
-def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
+def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> None:
     ds = meta.datasets[f.dataset]
     yr = f"{f.year}{' (forecast)' if f.year > meta.periods.base_year else ''}"
     st.markdown(ui.page_header("Profit Pools Explorer",
@@ -187,7 +214,13 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
     st.markdown(ui.section_nav([("overview", "Overview"), ("trends", "Trends & detail"), ("detail", "Summary table")]),
                 unsafe_allow_html=True)
     st.markdown('<div id="overview"></div>', unsafe_allow_html=True)
-    _kpis(result, meta, f, geo)
+    if f.view != "baseline":
+        ap = S.applied()
+        n = len(ap.enabled)
+        st.markdown(ui.banner(f"{'Comparing' if f.view == 'compare' else 'Showing'} scenario “{ap.name}” "
+                              f"({n} assumption{'s' if n != 1 else ''}){' with baseline' if f.view == 'compare' else ''}. "
+                              f"Every chart, KPI and table below uses the same scenario run."), unsafe_allow_html=True)
+    _kpis(result, meta, f, geo, cmp)
 
     # Toolbar
     with st.container(horizontal=True, wrap=True, vertical_alignment="bottom", gap="medium"):
@@ -197,6 +230,10 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
                              format_func=S.SEGMENT_LABELS.get, on_change=S.set_selected, args=(None,),
                              help="Sub-pools: the next level of the hierarchy. Geography: states (or counties "
                                   "within a state). Funding source: who pays provider and pharmacy revenue.")
+        if cmp is not None:
+            st.segmented_control("Color by", ["margin", "delta_margin"], key=S.K_COLOR_BY, required=True,
+                                 format_func={"margin": "Margin", "delta_margin": "Δ margin"}.get,
+                                 help="Margin, or the change in margin versus baseline (pp).")
         st.segmented_control("Spend basis", list(S.BASIS_LABELS), key=S.K_BASIS, required=True,
                              format_func=S.BASIS_LABELS.get,
                              help="Allowed = everything providers receive. Payer-paid = paid by payers and "
@@ -205,6 +242,15 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
 
     tiles = V.marimekko_tiles(result, meta, f.dataset, f.year, f.focus, geo, f.basis, f.segment_by)
     rows = tiles.rows
+    color_by = "margin"
+    if cmp is not None and not rows.empty:
+        bt = V.marimekko_tiles(cmp, meta, f.dataset, f.year, f.focus, geo, f.basis, f.segment_by).rows
+        bt = bt.set_index(["col_id", "seg_key"])[["revenue", "gain", "margin"]]
+        j = rows.join(bt, on=["col_id", "seg_key"], rsuffix="_b")
+        rows = rows.assign(d_revenue=j["revenue"] - j["revenue_b"].fillna(0),
+                           d_gain=j["gain"].fillna(0) - j["gain_b"].fillna(0),
+                           d_margin=j["margin"] - j["margin_b"])
+        color_by = st.session_state[S.K_COLOR_BY]
     col_labels = {c: meta.taxonomy[c].short_label for c in rows["col_id"].unique()}
     estimate_cols = {c for c in col_labels if V.economics_label(meta, c, f.dataset) == "top_down"}
     sel = f.selected
@@ -214,12 +260,12 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
         st.session_state[K_TILE_REFS] = []
     else:
         fig, refs = marimekko.build(rows, col_labels, selected=sel_ref, estimate_cols=estimate_cols,
-                                    basis_label=S.BASIS_REVENUE_LABEL[f.basis])
+                                    basis_label=S.BASIS_REVENUE_LABEL[f.basis], color_by=color_by)
         st.session_state[K_TILE_REFS] = refs
-        chart_key = f"pp.mekko.{f.dataset}.{f.focus}.{f.segment_by}.{f.basis}.{f.geo_id}.{f.year}"
+        chart_key = f"pp.mekko.{f.dataset}.{f.focus}.{f.segment_by}.{f.basis}.{f.geo_id}.{f.year}.{f.view}"
         st.plotly_chart(fig, key=chart_key, on_select=lambda: _on_chart_select(chart_key),
                         selection_mode="points", config=PLOTLY_CONFIG)
-    st.markdown(ui.margin_legend(bool(estimate_cols)), unsafe_allow_html=True)
+    st.markdown(ui.margin_legend(bool(estimate_cols), delta=color_by == "delta_margin"), unsafe_allow_html=True)
     for n in tiles.notes:
         st.markdown(ui.note(n), unsafe_allow_html=True)
     st.markdown("".join(ui.note(r) for r in _merge_reasons(meta, tiles.unavailable)), unsafe_allow_html=True)
@@ -265,7 +311,7 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
 # Section B — trends, drivers, inspector
 # ---------------------------------------------------------------------------
 
-def _inspector(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
+def _inspector(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> None:
     sel = f.selected
     node_id = (sel[2] or sel[0]) if sel else f.focus
     seg_note = None
@@ -293,6 +339,13 @@ def _inspector(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
     ]
     if m["margin_coverage"] < 0.999:
         kv.append(("Margin data coverage", fmt.pct(m["margin_coverage"], 1)))
+    if cmp is not None:
+        b = V.node_metrics(cmp, meta, f.dataset, f.year, node_id, geo, f.basis)
+        if b is not None:
+            kv += [None, ("Δ revenue vs baseline", fmt.money(m["revenue"] - b["revenue"], signed=True)),
+                   ("Δ gain vs baseline", fmt.money((m["gain"] if np.isfinite(m["gain"]) else 0)
+                                                    - (b["gain"] if np.isfinite(b["gain"]) else 0), signed=True)),
+                   ("Δ margin vs baseline", fmt.pp(m["margin"] - b["margin"]))]
     if np.isfinite(m.get("members", np.nan)) and m["members"] > 0:
         pure_payer = node_id is not None and V.economics_label(meta, node_id, f.dataset) == "payer_pnl"
         kv += [None, ("Enrollment" if pure_payer else "Payer enrollment", fmt.members(m["members"])),
@@ -318,6 +371,17 @@ def _inspector(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
             tot = comp[["allowed", "paid", "consumer"]].sum()
             html.append(ui.note(f"Consumer spend (member cost sharing and self-pay) is "
                                 f"{fmt.pct(tot['consumer'] / tot['allowed'])} of allowed receipts."))
+    if cmp is not None:
+        why = [(a, dr, dg) for a, dr, dg in _bridge_for(meta, f, geo, node_id)
+               if abs(dr) >= 0.5e6 or abs(dg) >= 0.5e6]
+        html.append('<div class="pp-h3" style="margin-top:14px">Why it changed</div>')
+        if why:
+            html.append(ui.table(["Assumption (in order)", "Δ Revenue", "Δ Gain"],
+                                 [[a.label or a.driver, fmt.money(dr, signed=True), fmt.money(dg, signed=True)]
+                                  for a, dr, dg in why]))
+            html.append(ui.note("Sequential attribution in list order; contributions sum to the total change."))
+        else:
+            html.append(ui.note(f"No assumption changes this pool in {f.year}."))
     st.markdown("".join(html) + "</div>", unsafe_allow_html=True)
 
     text = load_config("methodology")
@@ -333,7 +397,7 @@ def _inspector(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
             st.markdown(text["top_down"]["body"])
 
 
-def section_trends(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
+def section_trends(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> None:
     st.markdown(ui.section_header("trends", "Trends & detail",
                                   f"{_label(meta, f.focus)} · {S.BASIS_REVENUE_LABEL[f.basis].lower()} by column of "
                                   f"the chart above · {_geo_text(meta, geo)}"), unsafe_allow_html=True)
@@ -344,12 +408,16 @@ def section_trends(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
         if not ids:
             st.info("No pools available for this view.")
         else:
-            series = []
-            for nid in ids:
-                s = V.node_series(result, meta, f.dataset, nid, geo, f.basis)
-                s["node_id"], s["label"] = nid, meta.taxonomy[nid].short_label
-                series.append(s)
-            df = pd.concat(series, ignore_index=True)
+            def all_series(res):
+                out = []
+                for nid in ids:
+                    s = V.node_series(res, meta, f.dataset, nid, geo, f.basis)
+                    s["node_id"], s["label"] = nid, meta.taxonomy[nid].short_label
+                    out.append(s)
+                return pd.concat(out, ignore_index=True)
+
+            df = all_series(result)
+            bdf = all_series(cmp) if cmp is not None else None
             fixed = LAYER_COLOR if f.focus is None else {}
             colors = trends.series_colors(ids, fixed)
             metric = st.segmented_control("Metric", ["revenue", "gain", "margin"], key=S.K_TREND_METRIC,
@@ -357,16 +425,21 @@ def section_trends(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
                                           format_func={"revenue": "Revenue", "gain": "Operating gain",
                                                        "margin": "Operating margin"}.get)
             plot = df.copy()
+            bplot = bdf.copy() if bdf is not None else None
             if metric == "margin":
                 yfmt, hover, suffix = ".1%", fmt.pct, ""
             else:  # axis in $B; hover keeps full formatting
                 plot[metric] = plot[metric] / 1e9
+                if bplot is not None:
+                    bplot[metric] = bplot[metric] / 1e9
                 yfmt, hover, suffix = "$,.0f", lambda v: fmt.money(v * 1e9), "B"
             fig = trends.lines(plot, metric, label_col="label", id_col="node_id", colors=colors,
                                base_year=meta.periods.base_year, yformat=yfmt, hover_fmt=hover,
-                               zero_line=metric != "revenue")
+                               zero_line=metric != "revenue", baseline=bplot)
             fig.update_yaxes(ticksuffix=suffix)
             st.plotly_chart(trends.mark_year(fig, f.year), config=PLOTLY_CONFIG, key="pp.trend")
+            if cmp is not None:
+                st.markdown(ui.note("Faint lines show the baseline; solid lines the scenario."), unsafe_allow_html=True)
             if len(ids) > trends.MAX_SERIES:
                 st.markdown(ui.note("Series beyond the fifth share the neutral 'other' color; hover for names."),
                             unsafe_allow_html=True)
@@ -378,9 +451,11 @@ def section_trends(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
                                                base_year=meta.periods.base_year),
                             config=PLOTLY_CONFIG, key="pp.composition")
 
+            if cmp is not None:
+                _scenario_bridge_table(meta, f, geo)
             drivers = V.change_drivers(result, meta, f.dataset, f.year, f.focus, geo, f.basis)
-            st.markdown(f'<div class="pp-h3" style="margin-top:8px">What drove the change, {f.year - 1}→{f.year}</div>',
-                        unsafe_allow_html=True)
+            st.markdown(f'<div class="pp-h3" style="margin-top:8px">What drove the change, {f.year - 1}→{f.year}'
+                        f'{" (scenario)" if f.view != "baseline" else ""}</div>', unsafe_allow_html=True)
             if drivers.empty:
                 st.markdown(ui.note("No prior year in range."), unsafe_allow_html=True)
             else:
@@ -392,13 +467,27 @@ def section_trends(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
                       (f"{'+' if r.d_margin_pp > 0 else fmt.MINUS if r.d_margin_pp < 0 else ''}"
                        f"{abs(r.d_margin_pp):.1f} pp") if np.isfinite(r.d_margin_pp) else fmt.DASH]
                      for r in d.itertuples()]), unsafe_allow_html=True)
-                st.markdown(ui.note("Baseline drivers only. Scenario attribution (by assumption) arrives with the "
-                                    "scenario engine."), unsafe_allow_html=True)
+                st.markdown(ui.note("Year-over-year change by pool. In Compare view the table above attributes "
+                                    "the scenario's change to each assumption."), unsafe_allow_html=True)
     with right:
-        _inspector(result, meta, f, geo)
+        _inspector(result, meta, f, geo, cmp)
 
 
-def section_table(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
+def _scenario_bridge_table(meta: Metadata, f: S.Filters, geo: Geo) -> None:
+    rows = _bridge_for(meta, f, geo, f.focus)
+    st.markdown(f'<div class="pp-h3" style="margin-top:8px">Why the scenario differs from baseline, {f.year} · '
+                f'{_label(meta, f.focus)}</div>', unsafe_allow_html=True)
+    total_r, total_g = sum(r for _, r, _ in rows), sum(g for _, _, g in rows)
+    body = [[f"{i}. {a.label or a.driver}", fmt.money(dr, signed=True), fmt.money(dg, signed=True)]
+            for i, (a, dr, dg) in enumerate(rows, start=1)]
+    body.append(["Total change", fmt.money(total_r, signed=True), fmt.money(total_g, signed=True)])
+    st.markdown(ui.table(["Assumption (applied in order)", "Δ Revenue", "Δ Gain"], body), unsafe_allow_html=True)
+    st.markdown(ui.note("Sequential attribution: each row is the change from adding that assumption to the ones "
+                        "above it. Rows sum exactly to the total; reordering assumptions can shift amounts "
+                        "between rows."), unsafe_allow_html=True)
+
+
+def section_table(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> None:
     st.markdown(ui.section_header("detail", "Summary table",
                                   f"{_label(meta, f.focus)} · {f.year} · {S.BASIS_REVENUE_LABEL[f.basis].lower()}"),
                 unsafe_allow_html=True)
@@ -418,8 +507,14 @@ def section_table(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
         "Coverage": r["coverage"].map({"bottom_up": "Bottom-up", "allocated": "Allocated", "top_down": "Top-down",
                                        "mixed": "Mixed"}),
     })
+    if cmp is not None:
+        b = V.rollup(cmp, meta, f.dataset, f.year, f.focus, geo, f.basis).rows.set_index("node_id")
+        out.insert(2, "Δ Revenue ($B)", (r["revenue"].to_numpy() - b["revenue"].reindex(r["node_id"]).fillna(0).to_numpy()) / 1e9)
+        out.insert(5, "Δ Gain ($B)", (r["gain"].fillna(0).to_numpy() - b["gain"].reindex(r["node_id"]).fillna(0).to_numpy()) / 1e9)
     st.dataframe(out, hide_index=True, width="stretch", column_config={
         "Revenue ($B)": st.column_config.NumberColumn(format="$%.1f"),
+        "Δ Revenue ($B)": st.column_config.NumberColumn(format="%+.2f"),
+        "Δ Gain ($B)": st.column_config.NumberColumn(format="%+.2f"),
         "Share": st.column_config.NumberColumn(format="%.1f%%"),
         "Operating gain ($B)": st.column_config.NumberColumn(format="$%.2f"),
         "Margin": st.column_config.NumberColumn(format="%.1f%%"),
@@ -432,7 +527,7 @@ def section_table(result, meta: Metadata, f: S.Filters, geo: Geo) -> None:
 def render() -> None:
     a = data.adapter()
     meta = a.metadata
-    result = data.baseline()
+    base = data.baseline()
     S.init(meta)
     layout.global_bar(meta)
     f = S.current()
@@ -440,7 +535,20 @@ def render() -> None:
         S.set_focus(None)
         f = S.current()
     geo = Geo.parse(meta, f.geo_id)
-    section_overview(result, meta, f, geo)
-    f = S.current()
-    section_trends(result, meta, f, geo)
-    section_table(result, meta, f, geo)
+
+    # ONE engine: the scenario view and every chart read the same cached scenario run.
+    result, cmp = base, None
+    if f.view != "baseline":
+        run = data.scenario_run(S.applied().to_json())
+        if run.ok:
+            result = run.result
+            cmp = base if f.view == "compare" else None
+        else:
+            st.error("The applied scenario has blocking issues; showing baseline. Open the scenario builder to fix: "
+                     + " ".join(i.message for i in run.issues if i.level == "error")[:400])
+            f = S.Filters(**{**f.__dict__, "view": "baseline"})
+
+    section_overview(result, meta, f, geo, cmp)
+    f = S.Filters(**{**S.current().__dict__, "view": f.view})
+    section_trends(result, meta, f, geo, cmp)
+    section_table(result, meta, f, geo, cmp)

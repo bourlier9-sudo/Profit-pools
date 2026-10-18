@@ -37,7 +37,7 @@ LAYER_COLOR = {
     "MANUFACTURER": CATEGORICAL[3],
     "HEALTH_SERVICES": CATEGORICAL[4],
 }
-FUNDING_COLOR = {"FS_UNINSURED": "#8A97A3", "FS_TRAD_MCR": "#A9B4BE", "FS_SUPPLEMENTAL": "#C6CED5"}
+FUNDING_COLOR = {"FS_UNINSURED": "#8A97A3", "FS_MCR_FFS": "#9FAAB4", "FS_MCD_FFS": "#B4BEC7", "FS_SUPPLEMENTAL": "#C9D1D8"}
 
 # Operating margin — diverging, anchored at 0%, clamped. (stop, hex)
 MARGIN_MIN, MARGIN_MAX = -0.10, 0.20
@@ -85,6 +85,17 @@ def margin_color(margin: float | None) -> str:
             a, b = _hex_to_rgb(c0), _hex_to_rgb(c1)
             return _rgb_to_hex([a[i] + (b[i] - a[i]) * t for i in range(3)])
     return MARGIN_STOPS[-1][1]
+
+
+DELTA_MARGIN_CLAMP = 0.02  # ±2 pp
+
+
+def delta_margin_color(d: float | None) -> str:
+    """Change in margin (fraction) on the same diverging palette, clamped at ±2 pp."""
+    if d is None or d != d:
+        return COLOR["missing"]
+    t = max(-1.0, min(1.0, d / DELTA_MARGIN_CLAMP))
+    return margin_color(t * (-MARGIN_MIN if t < 0 else MARGIN_MAX))
 
 
 def relative_luminance(hex_color: str) -> float:

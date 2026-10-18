@@ -8,7 +8,7 @@ Status legend: ✅ done · 🔄 in progress · ⏳ planned
 | 1 | Configuration, taxonomy, synthetic data, contracts, adapters, reconciliation tests (revised: datasets, explicit revenue components, instances, L1–L4) | ✅ |
 | 2 | Baseline driver cube, forecast projection, engine (no assumptions), roll-ups, geography, coverage, `ModelResult` | ✅ |
 | 3 | App shell, design system, KPI strip, **Marimekko and drilldown**, trends and detail (Section B); allowed / paid / consumer spend | ✅ |
-| 4 | Scenario engine: assumptions, hierarchical resolution, validation, ledger, bridge. Builder dialog. Compare mode | ⏳ |
+| 4 | Scenario engine: assumptions, hierarchical resolution, validation, ledger, bridge. Builder dialog. Compare mode | ✅ |
 | 4b | Ownership and value capture: integrated org, owned asset routing, consolidation | ⏳ |
 | 5 | Sankey with per-dimension granularity, roll-ups, threshold; flow inspector; table view | ⏳ |
 | 6 | Growth and CAGR section, baseline vs scenario, driver waterfall | ⏳ |
@@ -32,7 +32,7 @@ assumptions.
 * `core/config/*.yaml`:
   * taxonomy: L1–L4 below the layer, ragged, with PBM Services under Pharmacy
   * datasets: MARKET / ENTERPRISE
-  * funding sources: uninsured, traditional Medicare & public, supplemental
+  * funding sources: uninsured, government-managed FFS (Medicare FFS, Medicaid FFS), supplemental
   * LOBs, and spending categories (one per recipient leaf, instance availability)
   * fictional geography, periods
   * metric and driver catalogs, baseline forecast rates
@@ -121,18 +121,45 @@ assumptions.
 * There is no Export menu yet (Phase 7), so nothing is shown rather than a dead control.
 * Driver attribution covers baseline year-over-year change only.
 
-## Phase 4: scenario engine and builder ⏳
+## Phase 4: scenario engine and builder ✅
 
-**Acceptance:**
-* Hierarchical scopes, including dataset and funding-source scopes, resolve per ARCHITECTURE.md §6.2.
-* Conflicts and supersessions are reported.
-* Propagation tests cover enrollment, allowed PMPM, utilization/price, payer and provider margin,
-  unattributed revenue and top-down drivers.
-* No double counting.
-* The bridge sums to the total Δ.
-* The builder dialog supports full CRUD, reorder, enable/disable, preview, draft vs applied, and reset.
-* It includes the "How is provider revenue estimated?" panel.
-* Utilization and opex volume-scaling assumptions are offered only as user estimates, and never for pharmacy.
+**Model update (user):** government-managed insurance, with Medicare FFS and Medicaid FFS as separate
+funding sources (group "Government-managed (FFS)"), replaces the single "traditional Medicare & public" source.
+
+**Deliverables:**
+* `model/scenario.py`: Assumption, Scope, YearRange and Scenario (immutable), editing helpers, schema-v1 JSON
+  round-trip with structural and version validation, content hash.
+* `model/resolve.py`: scope matching (any taxonomy level, LOB or funding sources and groups, state or county,
+  dataset, years), specificity, replace/stack resolution, conflict and supersession detection.
+* `model/scenario_engine.py`: driver catalog validation (eligibility, data requirements, units, years,
+  datasets), stage-ordered application.
+  * Levels, totals distributed per dataset-year, enrollment shifts (incl. to the uninsured), growth-rate
+    overrides via the pluggable rate function.
+  * Payer margin solved via opex, opex volume scaling, member cost share.
+  * Result sanity checks, ledger, sequential **bridge**, single-assumption **preview**.
+* `engine.py`: opex volume scaling and payer-margin targets (stage 3, last).
+* UI:
+  * The scenario chip opens a **builder dialog**:
+    * rows with enable, reorder, edit, duplicate and delete;
+    * per-row status and issues;
+    * an add/edit form with drivers grouped by type and the pool picker filtered by eligibility;
+    * sources, geography, years, method, value with units, Replace/Stack, shift target, preview;
+    * methodology panels;
+    * Apply, Discard, Reset, Export JSON, Import JSON, and the illustrative example.
+  * **View** control (Baseline / Scenario / Compare) and scenario banner.
+  * KPIs Δ vs baseline. Marimekko tooltips Δ and **color by Δ margin**. Trends with faint baseline lines.
+  * **"Why the scenario differs"** bridge table, and inspector **"Why it changed"**.
+  * Summary-table Δ columns.
+  * Phone-width CSS: KPIs wrap two per row, tighter padding.
+* Tests: 40 scenario-engine tests (propagation, no double counting, resolution, validation, growth/CAGR,
+  bridge, JSON) plus 13 scenario UI tests. **205 tests total.**
+
+**Acceptance (met):**
+* One engine. Every view in Scenario and Compare reads the same cached scenario run.
+* Enrollment, spending, margin, cost-share, shift and growth assumptions each propagate exactly once (tested).
+* Conflicts block apply. Supersessions are flagged.
+* The bridge sums to the total change.
+* The builder flow was verified in Chromium: load example → apply → compare.
 
 ## Phase 5: Sankey ⏳
 
@@ -178,12 +205,14 @@ assumptions.
 | 2026-10-18 | Fictional state and county names, to avoid implying real data. |
 | 2026-10-18 | Facts are stored at their finest grain only, with no pre-aggregated rows, to prevent double counting. |
 | 2026-10-18 | No ADMIN_EXPENSE column. Residual opex is derived by the model. |
-| 2026-10-18 | **Revised (user):** the market is primary. Market payer PMPMs are benchmarks from enterprise data. Recipient revenue = explicit components (payer claims, uninsured, traditional Medicare & public, supplemental), with no unattributed plug. |
+| 2026-10-18 | **Revised (user):** the market is primary. Market payer PMPMs are benchmarks from enterprise data. Recipient revenue = explicit components (payer claims, uninsured, government-managed FFS (Medicare FFS, Medicaid FFS), supplemental), with no unattributed plug. |
 | 2026-10-18 | **Revised (user):** a dataset toggle covers market vs the company book. The company view excludes Manufacturer, Health Services and PBM Services. The company label is configurable, and the fictional build uses "Enterprise (fictional)". |
 | 2026-10-18 | **Revised (user):** volume is a single "instances" count, provider only, never pharmacy (admin vs drug claims). Utilization and opex volume scaling are user-entered estimates only. |
 | 2026-10-18 | **Revised (user):** PBM Services moves under Pharmacy (top-down, Marimekko only, no flows). Hierarchy depth: Payer and Manufacturer L1–L2, Health Services L1–L3, Provider and Pharmacy ≤ L4. |
 | 2026-10-18 | Enterprise recipient gain uses the pool's market margin: profit associated with enterprise members, not enterprise profit. |
 | 2026-10-18 | Market and enterprise drivers are independent in the engine. Benchmarks are applied when the data is built, not re-linked during scenarios. |
 | 2026-10-18 | **Revised (user):** allowed vs paid. Payer claims = paid. Recipient revenue = allowed. Consumer spend = allowed − paid, viewable through a spend-basis control. |
-| 2026-10-18 | Overlapping assumptions compound by default. `override` mode replaces broader assumptions (pending user confirmation). |
+| 2026-10-18 | **Decided (user):** overlapping assumptions **conflict by default**. The most specific replaces broader ones; equal specificity blocks; `stack` is explicit. |
+| 2026-10-18 | **Confirmed (user):** enterprise recipient gain = enterprise spend × the pool's market margin. |
+| 2026-10-18 | **Revised (user):** government-managed insurance is split into Medicare FFS and Medicaid FFS funding sources. |
 | 2026-10-18 | PPTX via python-pptx native charts and shapes. No Kaleido or Chrome dependency. |

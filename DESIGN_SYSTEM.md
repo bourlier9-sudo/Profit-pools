@@ -74,7 +74,7 @@ worst adjacent CVD ΔE 11.4, normal-vision ΔE 23.1.
 | 3 | Pharmacy | `#159A8C` |
 | 4 | Manufacturer | `#8A63D2` |
 | 5 | Health Services | `#C9A227` (sub-3:1 contrast, so it always appears with a visible label) |
-| — | Funding sources (Uninsured · Trad. Medicare & public · Supplemental) | `#8A97A3`, `#A9B4BE`, `#C6CED5` (neutral steps, always labeled) |
+| — | Funding sources (Uninsured · Medicare FFS · Medicaid FFS · Supplemental) | `#8A97A3`, `#9FAAB4`, `#B4BEC7`, `#C9D1D8` (neutral steps, always labeled) |
 | — | Other (threshold roll-up) | `#D9DEE3` |
 
 Sankey links use the source node's hue at 35% opacity, or 60% on hover or selection.
@@ -130,7 +130,7 @@ Negative numbers use a true minus (−), not a hyphen. Unavailable values render
 | `global_bar` | Inline compact selects and segmented control, 32 high | sticky |
 | `dataset_toggle` | Two-segment control. The active segment is `--accent-weak` with `--accent` text. The Enterprise label comes from `datasets.yaml` | Switching hides excluded pools with a one-line note ("Manufacturer, Health Services and PBM Services are market-only") |
 | `methodology_panel` | Expander inside the assumption builder: "How is provider revenue estimated?", rendered from `methodology.yaml` for the active dataset | collapsed by default |
-| `scenario_chip` | Dot, "Scenario A · 4 changes", caret. Opens the builder dialog | `baseline` (gray dot), `active` (teal dot and teal text), `draft` (amber dot "unapplied edits") |
+| `scenario_chip` | Button with tune icon: "Baseline · build a scenario", or "‹name› · N changes" (+ "· unapplied edits"). Opens the builder dialog. Primary (teal) when a scenario is applied | `baseline` (gray dot), `active` (teal dot and teal text), `draft` (amber dot "unapplied edits") |
 | `kpi_strip` | 4–6 metrics in one row, hairline dividers. Each has a Micro label, a KPI value and a Δ line (Small) | `delta-good` / `delta-bad` / `n/a` with reason |
 | `section_header` | H2, a one-line explanation, and right-aligned section controls | anchor id |
 | `breadcrumb` | `All pools › Payer › Commercial`. Every segment except the last is a button | — |
@@ -168,7 +168,7 @@ Negative numbers use a true minus (−), not a hyphen. Unavailable values render
   * "Drill into ‹column›" makes the column the new parent. "Open ‹tile›" jumps straight to the tile.
   * The breadcrumb navigates back up and keeps the previous scope selected.
 * **Segment columns by:** Sub-pools (next hierarchy level), Geography (states, or counties within a state), or
-  Funding source (payer LOB groups, uninsured, traditional Medicare & public, supplemental).
+  Funding source (payer LOB groups, uninsured, government-managed FFS (Medicare FFS, Medicaid FFS), supplemental).
 * **Spend basis:** Allowed / Payer-paid / Consumer.
 * **Compare mode:** a toggle between Scenario and Δ vs Baseline. In Δ mode, colors encode the margin change
   in pp (diverging), and the widths still show scenario revenue.

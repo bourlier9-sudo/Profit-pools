@@ -118,6 +118,19 @@ html, body, .stApp, .stMarkdown, button, input, select, textarea, [data-baseweb]
 .st-key-pp_crumbs button:disabled p {{ color:var(--ink-1) !important; font-weight:600; }}
 .pp-crumb-sep {{ color:var(--ink-3); padding:0 2px; line-height:32px; }}
 
+/* Scenario banner */
+.pp-banner {{ {_type('small')} color:var(--accent); background:var(--accent-weak); border-left:3px solid var(--accent);
+  padding:6px 12px; margin:10px 0 0; border-radius:0 4px 4px 0; }}
+
+/* Small screens (phones): stack KPIs two per row, tighter padding */
+@media (max-width: 760px) {{
+  [data-testid="stMainBlockContainer"], .block-container {{ padding:8px 12px 40px 12px; }}
+  .pp-kpis {{ flex-wrap:wrap; }}
+  .pp-kpi {{ flex:1 1 45%; border-left:none; border-top:1px solid var(--line); padding:10px 12px; }}
+  .pp-title {{ font-size:22px; line-height:28px; }}
+  .st-key-pp_globalbar {{ position:static; }}
+}}
+
 /* Widgets */
 [data-testid="stSegmentedControl"] button p, [data-baseweb="select"] div {{ font-size:13px; }}
 div[data-testid="stDataFrame"] {{ border:1px solid var(--line); border-radius:4px; }}

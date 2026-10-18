@@ -56,7 +56,7 @@ There is no separate page for assumptions. The assumption builder opens from the
 3. **Provider and dispensing-pharmacy revenue** is the sum of explicit estimated components, with no plug:
    * payer claims (members × allowed PMPM by category),
    * uninsured & self-pay (population × PMPM),
-   * traditional Medicare & other public programs (population × PMPM),
+   * government-managed insurance — Medicare FFS and Medicaid FFS (population × PMPM),
    * supplemental & state payments (hospitals only, annual by state).
 
    Gain = revenue × operating margin. The margin is constant unless explicitly assumed. Remaining expense is a
@@ -84,8 +84,10 @@ There is no separate page for assumptions. The assumption builder opens from the
   enabled flag and notes.
   * The scope covers dataset (market / enterprise / both), a taxonomy node at **any level**, LOBs or LOB
     groups, funding sources, geography and years.
-* Overlapping assumptions resolve deterministically by specificity, override vs adjust, then list order.
-  Conflicts, superseded adjustments and order-sensitive cells are shown to the user (ARCHITECTURE.md §5.2).
+* **Overlapping assumptions conflict by default.**
+  * The more specific scope replaces broader ones on shared cells, flagged as superseded.
+  * Equally specific overlaps block Apply until resolved.
+  * An assumption explicitly set to **Stack** compounds instead (ARCHITECTURE.md §6.2).
 * Only drivers valid for the selected node's economics and data coverage are offered.
 * Invalid inputs produce validation messages and block apply. Results never silently go inconsistent.
 * **Builder UX** (opened as a dialog from the chip "Scenario A · 4 changes"):
@@ -98,7 +100,7 @@ There is no separate page for assumptions. The assumption builder opens from the
 
 ## 7. Value flows
 
-* Sources are payer segments plus, in the market view, the uninsured, traditional Medicare & public, and
+* Sources are payer segments plus, in the market view, the uninsured, government-managed FFS (Medicare FFS, Medicaid FFS), and
   supplemental payments. Top-down pools, including PBM Services, never appear in flows.
 
 * Users choose the visible layers or columns.

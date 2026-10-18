@@ -6,6 +6,7 @@ import streamlit as st
 
 from profit_pools.core.data.adapters import DataAdapter
 from profit_pools.core.taxonomy import Metadata
+from profit_pools.shell import scenario_builder
 from profit_pools.shell import state as S
 
 
@@ -66,7 +67,12 @@ def global_bar(meta: Metadata) -> None:
         st.markdown('<div class="pp-caption" style="padding-bottom:8px"><span class="pp-muted">SCOPE&nbsp;&nbsp;</span>'
                     + " › ".join(path) + "</div>", unsafe_allow_html=True, width="content")
         st.space("stretch")
-        st.markdown('<div style="padding-bottom:4px"><span class="pp-scenario" '
-                    'title="Scenario builder arrives with the scenario engine">'
-                    '<span class="pp-dot"></span>Baseline · no scenario</span></div>',
-                    unsafe_allow_html=True, width="content")
+        if S.has_scenario():
+            st.segmented_control("View", list(S.VIEW_LABELS), key=S.K_VIEW, required=True,
+                                 format_func=S.VIEW_LABELS.get,
+                                 help="Baseline, the applied scenario, or the scenario compared with baseline.")
+        active = S.has_scenario()
+        if st.button(scenario_builder.chip_label(), key="pp.chip", icon=":material/tune:",
+                     type="primary" if active else "secondary",
+                     help="Open the scenario builder (assumptions apply to every chart)."):
+            scenario_builder.open_builder(meta)

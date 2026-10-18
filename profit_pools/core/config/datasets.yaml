@@ -18,7 +18,7 @@ datasets:
     short_label: Market
     excluded_nodes: []
     payer_source_type: estimated
-    funding_sources: [FS_UNINSURED, FS_TRAD_MCR, FS_SUPPLEMENTAL]
+    funding_sources: [FS_UNINSURED, FS_MCR_FFS, FS_MCD_FFS, FS_SUPPLEMENTAL]
   ENTERPRISE:
     label: Enterprise (fictional)
     short_label: Enterprise

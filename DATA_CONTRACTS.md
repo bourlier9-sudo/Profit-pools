@@ -36,7 +36,7 @@ Executable source of truth: `profit_pools/core/data/contracts.py` (column specs 
 | Payer allowed PMPM | **PMPM benchmark**: enterprise state-level PMPM × market factor | Observed claims |
 | Payer revenue, gain | Market enrollment × benchmark premium PMPM; gain = revenue × estimated market margin | Observed |
 | Service instances | Enterprise instances per member × market members | Observed |
-| Recipient revenue | Payer claims + uninsured + traditional Medicare & public + supplemental payments | Enterprise payer claims only |
+| Recipient revenue | Payer claims + uninsured + government-managed FFS (Medicare FFS, Medicaid FFS) + supplemental payments | Enterprise payer claims only |
 | Recipient margin | Pool operating margin | **Same pool margin** as the market (a property of the pool) |
 | Top-down pools | Manufacturer, Health Services, PBM Services | **Excluded** |
 
@@ -57,7 +57,7 @@ consumer = allowed − paid      = member cost sharing (deductibles, copays, coi
 |---|---|---|
 | Payer segments | payer-paid claims | member cost sharing (varies by LOB and category) |
 | Uninsured & self-pay | 0 | all of it (self-pay, valued at allowed-equivalent) |
-| Traditional Medicare & public | program-paid | beneficiary cost sharing |
+| Medicare FFS / Medicaid FFS | program-paid | beneficiary cost sharing (Medicaid ≈ 0) |
 | Supplemental & state payments | all of it | 0 |
 
 * **Recipient revenue is allowed** (paid + consumer).
@@ -91,7 +91,7 @@ Revenue is the sum of **explicit, separately estimated components**. There is **
 
 ```
 REVENUE = Σ payer_claims inflows        payer segment members × allowed PMPM_c
-        + Σ funding_pmpm inflows        uninsured / traditional Medicare & public population × PMPM_c
+        + Σ funding_pmpm inflows        uninsured / Medicare FFS / Medicaid FFS population × PMPM_c
         + Σ supplemental inflows        state/supplemental payments (hospital leaves only)
 OPERATING_GAIN = REVENUE × OPERATING_MARGIN           (margin constant unless assumed)
 residual_opex  = REVENUE − OPERATING_GAIN              DERIVED
@@ -105,7 +105,8 @@ separate drivers.
 | Id | Label | Basis | Grain | Targets |
 |---|---|---|---|---|
 | `FS_UNINSURED` | Uninsured & self-pay | population × PMPM | county | all claims categories |
-| `FS_TRAD_MCR` | Traditional Medicare & other public programs | population × PMPM | county | all claims categories |
+| `FS_MCR_FFS` | Medicare fee-for-service (group: Government-managed FFS) | population × PMPM | county | all claims categories |
+| `FS_MCD_FFS` | Medicaid fee-for-service (group: Government-managed FFS) | population × PMPM | county | all claims categories |
 | `FS_SUPPLEMENTAL` | Supplemental & state payments | lump sum | state | hospital leaves only |
 
 These are **not** payer profit pools. They never appear as Marimekko tiles. They appear as Sankey sources
@@ -204,13 +205,13 @@ There is deliberately no `ADMIN_EXPENSE` column. Residual opex is derived (§2.3
 | `FLOW_KIND` | From → To | Grain | `ALLOCATION_METHOD` | Datasets |
 |---|---|---|---|---|
 | `payer_claims` | payer leaf → recipient leaf via category | county | `observed_claims` (ENTERPRISE) or `pmpm_benchmark` (MARKET) | both |
-| `funding_pmpm` | FS_UNINSURED, FS_TRAD_MCR → recipient leaf via category | county | `population_pmpm_estimate` | MARKET |
+| `funding_pmpm` | FS_UNINSURED, FS_MCR_FFS, FS_MCD_FFS → recipient leaf via category | county | `population_pmpm_estimate` | MARKET |
 | `supplemental` | FS_SUPPLEMENTAL → hospital leaf | state | `supplemental_estimate` | MARKET |
 
 ## 5. `FACT_COVERAGE_POPULATION` (fictional)
 
-Population for funding sources with basis `population_pmpm` (the uninsured, traditional Medicare and other
-public programs). Payer-pool enrollment stays in `FACT_POOL_METRICS.ENROLLMENT`.
+Population for funding sources with basis `population_pmpm` (the uninsured, Medicare FFS and Medicaid FFS
+enrollees). Payer-pool enrollment stays in `FACT_POOL_METRICS.ENROLLMENT`.
 
 | Column | Type | Null | Unit | Definition |
 |---|---|---|---|---|
@@ -270,7 +271,7 @@ Tolerance: relative 1e-9. The identities are exact by construction.
 |---|---|
 | `taxonomy.yaml` | Pool tree (L1–L4 below the layer, ragged). Inherited `economics`, `coverage`, `geo_level`, `receives_flows`. |
 | `datasets.yaml` | MARKET / ENTERPRISE: labels, excluded nodes, payer source type, funding sources. |
-| `funding_sources.yaml` | Uninsured, traditional Medicare & public, supplemental: basis, grain, eligible targets. |
+| `funding_sources.yaml` | Uninsured, government-managed FFS (Medicare FFS, Medicaid FFS), supplemental: basis, grain, group, eligible targets. |
 | `lobs.yaml` | LOB groups → LOBs. |
 | `spending_categories.yaml` | Category → recipient leaf (one each), instance availability, instance-unit definition. |
 | `geography.yaml` | Fictional states and counties, weights, price index, Medicaid expansion year. |
@@ -278,6 +279,7 @@ Tolerance: relative 1e-9. The identities are exact by construction.
 | `metrics.yaml` | Metric catalog: unit, additivity, provenance. |
 | `drivers.yaml` | Scenario driver catalog: scope kind, required data, methods, stage. |
 | `baseline_forecast.yaml` | Baseline annual rates with hierarchical lookup. |
+| `scenarios/illustrative.json` | Fictional example scenario (loaded from the builder). |
 | `methodology.yaml` | Text for "How is provider revenue estimated?" and other methodology panels, by dataset. |
 
 ## 9. Provenance vocabulary (UI labels)

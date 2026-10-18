@@ -19,7 +19,7 @@ import plotly.graph_objects as go
 
 from profit_pools.design import format as fmt
 from profit_pools.design.theme import TEMPLATE_NAME
-from profit_pools.design.tokens import CHART, COLOR, margin_color, text_on
+from profit_pools.design.tokens import CHART, COLOR, delta_margin_color, margin_color, text_on
 
 COL_GAP = 0.0035   # horizontal gap between columns (fraction of width)
 ROW_GAP = 0.004    # vertical gap between tiles
@@ -53,7 +53,8 @@ def _hover(r, col_label: str, basis_label: str, est: bool, extra: str) -> str:
 
 def build(tiles: pd.DataFrame, col_labels: dict[str, str], *, selected: TileRef | None = None,
           estimate_cols: set[str] = frozenset(), basis_label: str = "Revenue",
-          height: int | None = None) -> tuple[go.Figure, list[TileRef]]:
+          height: int | None = None, color_by: str = "margin") -> tuple[go.Figure, list[TileRef]]:
+    """`tiles` may carry d_revenue / d_gain / d_margin (scenario − baseline) for the compare view."""
     """Return the figure and the tile reference for each bar point (in trace order)."""
     if tiles.empty:
         fig = go.Figure(layout=dict(template=TEMPLATE_NAME, height=height or CHART["marimekko_height"]))
@@ -71,7 +72,11 @@ def build(tiles: pd.DataFrame, col_labels: dict[str, str], *, selected: TileRef 
         for r in g.itertuples(index=False):
             h = r.share_in_col
             y0 = top - h
-            fill = margin_color(r.margin if r.revenue_with_margin > 0 else None)
+            has_d = hasattr(r, "d_margin")
+            if color_by == "delta_margin" and has_d:
+                fill = delta_margin_color(r.d_margin if r.revenue_with_margin > 0 else None)
+            else:
+                fill = margin_color(r.margin if r.revenue_with_margin > 0 else None)
             xs.append(x0 + w / 2)
             ws.append(max(w - COL_GAP, w * 0.6))
             bases.append(y0 + ROW_GAP / 2)
@@ -82,7 +87,12 @@ def build(tiles: pd.DataFrame, col_labels: dict[str, str], *, selected: TileRef 
             label = f"{r.seg_label}{' · est.' if est else ''}"
             texts.append(f"{label}<br>{fmt.money(r.revenue)}" if h > 0.09 else label)
             tcolors.append(text_on(fill))
-            hovers.append(_hover(r, col_labels.get(col_id, col_id), basis_label, est, ""))
+            extra = ""
+            if has_d:
+                extra = (f"<span style='color:{COLOR['accent']}'><b>vs baseline</b>  revenue "
+                         f"{fmt.money(r.d_revenue, signed=True)} · gain {fmt.money(r.d_gain, signed=True)} · "
+                         f"margin {fmt.pp(r.d_margin)}</span>")
+            hovers.append(_hover(r, col_labels.get(col_id, col_id), basis_label, est, extra))
             refs.append(TileRef(col_id, r.seg_key, r.seg_node_id))
             top = y0
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import streamlit as st
 
+from profit_pools.core.model.scenario import Scenario
 from profit_pools.core.taxonomy import Metadata
 
 K_DATASET = "pp.dataset"
@@ -16,6 +17,13 @@ K_SEGMENT = "pp.segment"
 K_FOCUS = "pp.focus"          # Marimekko parent node (None = all pools)
 K_SELECTED = "pp.selected"    # (col_id, seg_key, seg_node_id) or None
 K_TREND_METRIC = "pp.trend_metric"
+K_DRAFT = "pp.scenario.draft"        # Scenario being edited in the builder
+K_APPLIED = "pp.scenario.applied"    # Scenario driving the workspace (None = baseline only)
+K_VIEW = "pp.view"                   # baseline | scenario | compare
+K_COLOR_BY = "pp.color_by"           # margin | delta_margin (compare view)
+K_EDIT = "pp.scenario.editing"       # assumption id being edited, "__new__", or None
+
+VIEW_LABELS = {"baseline": "Baseline", "scenario": "Scenario", "compare": "Compare"}
 
 BASIS_LABELS = {"allowed": "Allowed", "paid": "Payer-paid", "consumer": "Consumer"}
 BASIS_REVENUE_LABEL = {"allowed": "Revenue", "paid": "Payer-paid revenue", "consumer": "Consumer-paid revenue"}
@@ -31,6 +39,7 @@ class Filters:
     segment_by: str
     focus: str | None
     selected: tuple | None
+    view: str = "baseline"
 
 
 def init(meta: Metadata) -> None:
@@ -43,14 +52,37 @@ def init(meta: Metadata) -> None:
         K_FOCUS: None,
         K_SELECTED: None,
         K_TREND_METRIC: "revenue",
+        K_VIEW: "baseline",
+        K_COLOR_BY: "margin",
+        K_EDIT: None,
+        K_APPLIED: None,
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
+    if K_DRAFT not in st.session_state:
+        st.session_state[K_DRAFT] = Scenario("Scenario A", base_year=meta.periods.base_year)
 
 
 def current() -> Filters:
     s = st.session_state
-    return Filters(s[K_DATASET], int(s[K_YEAR]), s[K_GEO], s[K_BASIS], s[K_SEGMENT], s[K_FOCUS], s[K_SELECTED])
+    view = s[K_VIEW] if has_scenario() else "baseline"
+    return Filters(s[K_DATASET], int(s[K_YEAR]), s[K_GEO], s[K_BASIS], s[K_SEGMENT], s[K_FOCUS], s[K_SELECTED], view)
+
+
+def applied():
+    return st.session_state.get(K_APPLIED)
+
+
+def has_scenario() -> bool:
+    sc = applied()
+    return sc is not None and len(sc.enabled) > 0
+
+
+def draft_dirty() -> bool:
+    d, a = st.session_state.get(K_DRAFT), applied()
+    if a is None:
+        return d is not None and len(d.assumptions) > 0
+    return d.to_json() != a.to_json()
 
 
 def set_focus(node_id: str | None, selected: tuple | None = None) -> None:

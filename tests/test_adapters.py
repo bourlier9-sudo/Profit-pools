@@ -57,4 +57,4 @@ def test_factory(monkeypatch):
 def test_coverage_population_filter(adapter):
     p = adapter.coverage_population(years=[2025], states=["SRG"])
     assert set(p["YEAR"]) == {2025} and set(p["STATE"]) == {"SRG"}
-    assert set(p["FUNDING_SOURCE_ID"]) == {"FS_UNINSURED", "FS_TRAD_MCR"}
+    assert set(p["FUNDING_SOURCE_ID"]) == {"FS_UNINSURED", "FS_MCR_FFS", "FS_MCD_FFS"}

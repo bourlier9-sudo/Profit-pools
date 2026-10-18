@@ -35,9 +35,17 @@ def series_colors(ids: list[str], fixed: dict[str, str] | None = None) -> dict[s
 
 def lines(df: pd.DataFrame, value: str, *, label_col: str, id_col: str, colors: dict[str, str],
           base_year: int, yformat: str, hover_fmt, height: int | None = None,
-          zero_line: bool = False) -> go.Figure:
+          zero_line: bool = False, baseline: pd.DataFrame | None = None) -> go.Figure:
     """One 2px line per entity; marker only at the selected year (handled by caller via `mark_year`)."""
     fig = go.Figure()
+    if baseline is not None:  # compare view: baseline as a faint line of the same hue
+        for nid, g in baseline.groupby(id_col, sort=False):
+            g = g.sort_values("year")
+            fig.add_trace(go.Scatter(
+                x=g["year"], y=g[value], mode="lines", name=f"{g[label_col].iloc[0]} (baseline)",
+                line=dict(width=1.5, color=colors.get(nid, OTHER)), opacity=0.35, showlegend=False,
+                hovertext=[hover_fmt(v) for v in g[value]],
+                hovertemplate="%{fullData.name}  %{x}: %{hovertext}<extra></extra>"))
     for nid, g in df.groupby(id_col, sort=False):
         g = g.sort_values("year")
         fig.add_trace(go.Scatter(

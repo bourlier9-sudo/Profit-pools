@@ -1,5 +1,5 @@
 # Runtime
-streamlit>=1.37,<2      # st.dialog / st.popover / on_select required
+streamlit>=1.50,<2      # dialogs, on_select, horizontal containers, st.space, widget width
 plotly>=5.22
 pandas>=2.2
 numpy>=1.26

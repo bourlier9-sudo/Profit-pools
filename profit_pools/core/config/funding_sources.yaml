@@ -5,7 +5,11 @@
 # basis
 #   population_pmpm  POPULATION (FACT_COVERAGE_POPULATION) × PMPM by spending category
 #   lump_sum         annual amounts by state and target leaf (no population)
-schema_version: 1
+schema_version: 2
+
+# Optional grouping used for roll-ups (e.g. Sankey "Government-managed (FFS)").
+groups:
+  GOV_FFS: Government-managed (FFS)
 
 funding_sources:
   - id: FS_UNINSURED
@@ -16,14 +20,24 @@ funding_sources:
     description: >-
       Estimated spending by and for uninsured residents (self-pay, charity care
       at allowed-equivalent value), as uninsured population × estimated PMPM.
-  - id: FS_TRAD_MCR
-    label: Traditional Medicare & other public programs
-    short_label: Trad. Medicare & public
+  - id: FS_MCR_FFS
+    label: Medicare fee-for-service
+    short_label: Medicare FFS
+    group: GOV_FFS
     basis: population_pmpm
     geo_level: county
     description: >-
-      Fee-for-service Medicare and other public programs not run through a
-      managed-care profit pool, as covered population × estimated PMPM.
+      Government-managed traditional Medicare (not Medicare Advantage), as
+      FFS beneficiaries × estimated PMPM.
+  - id: FS_MCD_FFS
+    label: Medicaid fee-for-service
+    short_label: Medicaid FFS
+    group: GOV_FFS
+    basis: population_pmpm
+    geo_level: county
+    description: >-
+      Government-managed Medicaid outside managed-care plans, as FFS enrollees
+      × estimated PMPM.
   - id: FS_SUPPLEMENTAL
     label: Supplemental & state payments
     short_label: Supplemental

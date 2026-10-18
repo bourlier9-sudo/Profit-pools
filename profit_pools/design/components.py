@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from html import escape
 
-from profit_pools.design.tokens import MARGIN_MAX, MARGIN_MIN
+from profit_pools.design.tokens import DELTA_MARGIN_CLAMP, MARGIN_MAX, MARGIN_MIN
 
 
 def page_header(title: str, subtitle: str) -> str:
@@ -47,14 +47,18 @@ def note(text: str) -> str:
     return f'<div class="pp-note">{escape(text)}</div>'
 
 
-def margin_legend(show_estimate: bool = True) -> str:
+def margin_legend(show_estimate: bool = True, delta: bool = False) -> str:
     lo, hi = MARGIN_MIN * 100, MARGIN_MAX * 100
     ticks = [f"≤{lo:.0f}%", "0%", f"≥{hi:.0f}%"]
+    title = "Operating margin"
+    if delta:
+        c = DELTA_MARGIN_CLAMP * 100
+        ticks, title = [f"≤−{c:.0f} pp", "0", f"≥+{c:.0f} pp"], "Change in margin vs baseline"
     est = ('<span><span class="pp-swatch" style="border:none;background:none;width:auto;font-size:11px;'
            'color:var(--ink-3)">est.</span>Top-down estimate</span>') if show_estimate else ""
     return (
         '<div class="pp-legend">'
-        '<span class="pp-muted">Operating margin</span>'
+        f'<span class="pp-muted">{title}</span>'
         '<span class="pp-grad-wrap"><span class="pp-grad"></span>'
         f'<span class="pp-grad-ticks"><span>{ticks[0]}</span><span>{ticks[1]}</span><span>{ticks[2]}</span></span></span>'
         '<span><span class="pp-swatch pp-hatch"></span>Margin unavailable</span>'
@@ -79,3 +83,7 @@ def table(headers: list[str], rows: list[list[str]]) -> str:
     th = "".join(f"<th>{escape(h)}</th>" for h in headers)
     trs = "".join("<tr>" + "".join(f"<td>{escape(c)}</td>" for c in r) + "</tr>" for r in rows)
     return f'<table class="pp-comp"><thead><tr>{th}</tr></thead><tbody>{trs}</tbody></table>'
+
+
+def banner(text: str) -> str:
+    return f'<div class="pp-banner">{escape(text)}</div>'

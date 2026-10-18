@@ -25,7 +25,7 @@ MARKET (estimated), per year × county × LOB
     REVENUE                = members × 12 × enterprise state premium PMPM × market factor
     OPERATING_GAIN         = REVENUE × estimated market margin
   plus non-pool funding (market only)
-    uninsured / trad. Medicare flows = POPULATION × estimated PMPM_c   (uninsured: all self-pay)
+    uninsured / Medicare FFS / Medicaid FFS flows = POPULATION × estimated PMPM_c (uninsured: all self-pay)
     supplemental payments            = annual estimate by state, hospital leaves only
 
 Recipients, per dataset × year × state × leaf
@@ -127,17 +127,19 @@ MEMBER_SHARE_CATEGORY = dict(IP_MEDSURG=0.55, IP_MATERNITY=0.75, OP_ED=1.1, OP_S
                              RX_CHAIN_GENERIC=2.2, RX_INDEP_BRAND=1.3, RX_INDEP_GENERIC=2.2,
                              RX_SPEC_HEALTHSYS=0.45, RX_SPEC_INDEP=0.45, RX_MAIL=1.1)
 # Non-pool funding: share of allowed paid by the consumer (uninsured = all self-pay).
-FUNDING_MEMBER_SHARE = {"FS_UNINSURED": 1.0, "FS_TRAD_MCR": 0.17}
+FUNDING_MEMBER_SHARE = {"FS_UNINSURED": 1.0, "FS_MCR_FFS": 0.17, "FS_MCD_FFS": 0.01}
 
 # --- Non-pool funding (market only) ------------------------------------------
 FUNDING_PARAMS = {
     # base population (M, 2019), base PMPM (2019), mix group, Rx share multiplier
     "FS_UNINSURED": dict(population=5.5, pmpm=150, mix="MCD", rx_mult=0.3),
-    "FS_TRAD_MCR": dict(population=9.5, pmpm=980, mix="MCR", rx_mult=0.4),
+    "FS_MCR_FFS": dict(population=9.5, pmpm=980, mix="MCR", rx_mult=0.4),
+    "FS_MCD_FFS": dict(population=3.2, pmpm=640, mix="MCD", rx_mult=0.8),
 }
 FUNDING_PATH = {
     "FS_UNINSURED": {2019: 1.0, 2020: 1.03, 2021: 0.97, 2022: 0.92, 2023: 0.95, 2024: 1.04, 2025: 1.06},
-    "FS_TRAD_MCR": {2019: 1.0, 2020: 0.97, 2021: 0.94, 2022: 0.91, 2023: 0.89, 2024: 0.87, 2025: 0.86},
+    "FS_MCR_FFS": {2019: 1.0, 2020: 0.97, 2021: 0.94, 2022: 0.91, 2023: 0.89, 2024: 0.87, 2025: 0.86},
+    "FS_MCD_FFS": {2019: 1.0, 2020: 1.05, 2021: 1.10, 2022: 1.12, 2023: 1.06, 2024: 0.97, 2025: 0.95},
 }
 UNINSURED_STATE_FACTOR = {"SRG": 1.6, "CLP": 1.25}
 SUPPLEMENTAL_RATE = {"SRG": 0.08}  # share of state hospital inflows; default below
@@ -146,7 +148,7 @@ DEFAULT_SUPPLEMENTAL_RATE = 0.04
 # --- Recipient margins (pool property, shared by both datasets) --------------
 RECIPIENT_MARGIN = dict(
     PRV_IP_MEDSURG=0.035, PRV_IP_MATERNITY=0.020, PRV_OP_ED=0.040, PRV_OP_SURG=0.110, PRV_OP_OTHER=0.080,
-    PRV_HOSP_PSYCH=-0.018, PRV_HOSP_REHAB=0.085, PRV_PHYS_PRIMARY=0.030, PRV_PHYS_SPEC=0.092,
+    PRV_HOSP_PSYCH=-0.028, PRV_HOSP_REHAB=0.085, PRV_PHYS_PRIMARY=0.030, PRV_PHYS_SPEC=0.092,
     PRV_PHYS_BH=0.052, PRV_PAC_SNF=0.012, PRV_PAC_HH=0.071, PRV_AMB_ASC=0.215, PRV_AMB_IMG=0.118,
     RX_CHAIN_BRAND=0.020, RX_CHAIN_GENERIC=0.050, RX_INDEP_BRAND=0.012, RX_INDEP_GENERIC=0.040,
     RX_SPEC_HEALTHSYS=0.070, RX_SPEC_INDEP=0.035, RX_MAIL=0.061,

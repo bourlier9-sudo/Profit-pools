@@ -66,7 +66,14 @@ def run(cube: DriverCube, meta: Metadata, scenario_id: str | None = None) -> Mod
     payer = cube.payer.copy()
     mm12 = payer["members"] * 12
     payer["revenue"] = payer["premium_pmpm"] * mm12
-    payer["opex"] = payer["opex_pmpm"] * mm12
+    # Residual opex PMPM scales with enrollment by default (scaling = 1). A user-entered scaling s < 1
+    # holds (1 − s) of the opex at its pre-scenario member level: opex = PMPM × 12 × (s·members + (1−s)·ref).
+    if "opex_scaling" in payer:
+        sc = payer["opex_scaling"].fillna(1.0)
+        ref = payer["members_ref"].fillna(payer["members"])
+        payer["opex"] = payer["opex_pmpm"] * 12 * (sc * payer["members"] + (1 - sc) * ref)
+    else:
+        payer["opex"] = payer["opex_pmpm"] * mm12
 
     # Stage 6 — flows.
     spend = cube.spend.merge(_denominators(cube.payer, cube.population), on=POP_KEY,
@@ -94,6 +101,18 @@ def run(cube: DriverCube, meta: Metadata, scenario_id: str | None = None) -> Mod
     payer = payer.merge(sums.reset_index(), on=["dataset", "year", "state", "county", "node_id"], how="left")
     payer[["claims", "allowed"]] = payer[["claims", "allowed"]].fillna(0.0)
     payer["gain"] = payer["revenue"] - payer["claims"] - payer["opex"]
+    # Payer-margin assumptions (stage 3, applied last): solve residual opex so gain = target × revenue.
+    if "margin_set" in payer or "margin_pp" in payer:
+        mset = payer.get("margin_set", pd.Series(np.nan, index=payer.index))
+        mpp = payer.get("margin_pp", pd.Series(0.0, index=payer.index)).fillna(0.0)
+        touched = mset.notna() | (mpp != 0)
+        if touched.any():
+            with np.errstate(divide="ignore", invalid="ignore"):
+                pre = payer["gain"] / payer["revenue"]
+            target = mset.where(mset.notna(), pre + mpp)
+            payer.loc[touched, "gain"] = target[touched] * payer.loc[touched, "revenue"]
+            payer.loc[touched, "opex"] = (payer.loc[touched, "revenue"] - payer.loc[touched, "claims"]
+                                          - payer.loc[touched, "gain"])
     payer_rows = pd.DataFrame({
         "dataset": payer["dataset"], "year": payer["year"], "geo_level": "county",
         "state": payer["state"], "county": payer["county"], "node_id": payer["node_id"],

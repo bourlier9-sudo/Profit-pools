@@ -1,6 +1,6 @@
 # Payer lines of business — FICTIONAL. Two-level LOB hierarchy used by
 # filters, Sankey roll-ups and assumption scoping. Non-pool funding (uninsured,
-# traditional Medicare, supplemental) is configured in funding_sources.yaml.
+# government-managed FFS, supplemental) is configured in funding_sources.yaml.
 schema_version: 2
 
 groups:

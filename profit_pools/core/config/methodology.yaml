@@ -13,8 +13,9 @@ provider_revenue:
        enterprise's own claims experience and adjusted to the market. Allowed
        amounts include member cost sharing.
     2. **Uninsured & self-pay.** Estimated uninsured population × estimated PMPM.
-    3. **Traditional Medicare & other public programs.** Covered population ×
-       estimated PMPM.
+    3. **Government-managed insurance (FFS).** Medicare fee-for-service and
+       Medicaid fee-for-service enrollees × estimated PMPM (program-paid, plus
+       beneficiary cost sharing).
     4. **Supplemental & state payments.** Annual estimates by state, paid to
        hospitals only. Not tied to members or services.
 

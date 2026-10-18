@@ -39,7 +39,8 @@ unit_cost_trend:
 population_growth:
   default: 0.0
   FS_UNINSURED: 0.01
-  FS_TRAD_MCR: -0.02
+  FS_MCR_FFS: -0.02
+  FS_MCD_FFS: -0.01
 supplemental_growth:
   default: 0.03
 top_down_growth:

@@ -16,7 +16,7 @@ Track progress in BUILD_PLAN.md and update it at the end of every phase.
 * **Agreed economics** (do not change without the user's approval):
   * Two datasets (MARKET total market, ENTERPRISE company book) share one engine. ENTERPRISE excludes
     Manufacturer, Health Services and PBM Services. Never present fictional numbers under a real company's name.
-  * Recipients: revenue = Σ explicit inflows (payer claims, uninsured, traditional Medicare & public,
+  * Recipients: revenue = Σ explicit inflows (payer claims, uninsured, government-managed FFS (Medicare FFS, Medicaid FFS),
     supplemental). There is **no plug**. Gain = revenue × margin, and the margin is constant unless a
     `provider_margin` assumption changes it. There is no cost-structure model.
   * Payers: gain = revenue − claims − residual opex. Residual opex is derived. Its PMPM is held constant in
@@ -28,6 +28,10 @@ Track progress in BUILD_PLAN.md and update it at the end of every phase.
   * Payer and provider margin assumptions never cross-apply.
   * Hierarchy below the layer: Payer and Manufacturer L1–L2, Health Services L1–L3, Provider and Pharmacy ≤ L4.
 * **Assumptions target drivers, never derived outputs.** Each driver is consumed by exactly one pipeline stage.
+* **Overlapping assumptions conflict by default** (user decision). The most specific `replace` wins.
+  Equal-specificity overlaps are blocking errors. Only `stack` compounds.
+* Streamlit: anything that replaces widget-backed session state must run in an `on_click`/`on_change`
+  callback, never after the widget is drawn. Escape `$` in markdown (it renders as LaTeX).
 * **Null = unavailable, not zero.** Propagate it. Show coverage. Never fill with 0 in aggregation without
   also reporting coverage.
 * **No dead controls.** If a control cannot produce a valid result (an export, a selection, a driver), hide

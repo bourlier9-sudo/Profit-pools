@@ -75,7 +75,7 @@ def test_market_revenue_components(bundle, meta):
     assert set(f["FLOW_KIND"]) == {"payer_claims", "funding_pmpm", "supplemental"}
     # Every component is an explicit, named source — there is no plug.
     assert set(f.loc[f["FLOW_KIND"] != "payer_claims", "SOURCE_NODE_ID"]) == {
-        "FS_UNINSURED", "FS_TRAD_MCR", "FS_SUPPLEMENTAL"}
+        "FS_UNINSURED", "FS_MCR_FFS", "FS_MCD_FFS", "FS_SUPPLEMENTAL"}
     sup = f[f["FLOW_KIND"] == "supplemental"]
     assert set(sup["TARGET_NODE_ID"]) == set(meta.supplemental_targets("FS_SUPPLEMENTAL"))
     # Population-based components reconcile to population × PMPM via the population table.
@@ -110,7 +110,8 @@ def test_paid_and_consumer_spend(bundle):
     by_src = (consumer.groupby(f["SOURCE_NODE_ID"]).sum() / f.groupby("SOURCE_NODE_ID")["ANNUAL_FLOW_AMOUNT"].sum())
     assert np.isclose(by_src["FS_UNINSURED"], 1.0)                 # all self-pay
     assert np.isclose(by_src["FS_SUPPLEMENTAL"], 0.0)              # fully program-paid
-    assert 0.1 < by_src["FS_TRAD_MCR"] < 0.3
+    assert 0.1 < by_src["FS_MCR_FFS"] < 0.3
+    assert by_src["FS_MCD_FFS"] < 0.05
     assert by_src["PAY_COMM_IND"] > by_src["PAY_COMM_LG"] > by_src["PAY_MCD_TANF"]   # ACA > LG > Medicaid
     pc = f[f["FLOW_KIND"] == "payer_claims"]
     share = 1 - pc.groupby("SPENDING_CATEGORY")["PAID_AMOUNT"].sum() / pc.groupby("SPENDING_CATEGORY")["ANNUAL_FLOW_AMOUNT"].sum()
