@@ -33,7 +33,7 @@ TOP_KEY = ["dataset", "year", "node_id"]
 @dataclass(frozen=True)
 class DriverCube:
     payer: pd.DataFrame             # PAYER_KEY + lob, members, premium_pmpm, opex_pmpm
-    spend: pd.DataFrame             # SPEND_KEY + source_kind, lob, target_id, allowed_pmpm, inst_per_member
+    spend: pd.DataFrame             # SPEND_KEY + source_kind, lob, target_id, allowed_pmpm, paid_ratio, inst_per_member
     population: pd.DataFrame        # POP_KEY + population
     supplemental: pd.DataFrame      # SUPP_KEY + amount
     recipient_margin: pd.DataFrame  # MARGIN_KEY + margin (NaN = unavailable)
@@ -65,6 +65,7 @@ def build_history(adapter: DataAdapter) -> DriverCube:
         "dataset": p["DATASET"], "year": p["YEAR"], "state": p["STATE"], "county": p["COUNTY"],
         "node_id": p["NODE_ID"], "lob": p["LOB"], "members": p["ENROLLMENT"],
         "premium_pmpm": p["REVENUE"] / mm12,
+        # Residual opex is derived against PAID claims (allowed − member cost share).
         "opex_pmpm": (p["REVENUE"] - p["CLAIMS_EXPENSE"] - p["OPERATING_GAIN"]) / mm12,
     }).reset_index(drop=True)
 
@@ -79,15 +80,17 @@ def build_history(adapter: DataAdapter) -> DriverCube:
         "category": claims_like["SPENDING_CATEGORY"],
         "source_kind": np.where(claims_like["FLOW_KIND"] == "payer_claims", "payer", "funding"),
         "lob": _na_str(claims_like["PAYER_LOB"]), "target_id": claims_like["TARGET_NODE_ID"],
-        "amount": claims_like["ANNUAL_FLOW_AMOUNT"], "instances": claims_like["INSTANCE_COUNT"],
+        "amount": claims_like["ANNUAL_FLOW_AMOUNT"], "paid": claims_like["PAID_AMOUNT"],
+        "instances": claims_like["INSTANCE_COUNT"],
     })
     denom = _denominators(payer, population)
     sp = sp.merge(denom, on=POP_KEY, how="left", validate="many_to_one")
     if sp["denom"].isna().any():
         raise ValueError("Spending cells without a member/population denominator")
     sp["allowed_pmpm"] = sp["amount"] / (sp["denom"] * 12)
+    sp["paid_ratio"] = np.where(sp["amount"] > 0, sp["paid"] / sp["amount"], 1.0)
     sp["inst_per_member"] = sp["instances"] / sp["denom"]
-    spend = sp[[*SPEND_KEY, "source_kind", "lob", "target_id", "allowed_pmpm", "inst_per_member"]]
+    spend = sp[[*SPEND_KEY, "source_kind", "lob", "target_id", "allowed_pmpm", "paid_ratio", "inst_per_member"]]
 
     s = f[f["FLOW_KIND"] == "supplemental"]
     supplemental = pd.DataFrame({
@@ -107,6 +110,8 @@ def build_history(adapter: DataAdapter) -> DriverCube:
         "revenue": t["REVENUE"], "margin": t["OPERATING_MARGIN"],
     }).reset_index(drop=True)
 
+    if (s["PAID_AMOUNT"] != s["ANNUAL_FLOW_AMOUNT"]).any():
+        raise ValueError("Supplemental payments must be fully program-paid")
     return DriverCube(payer, spend.reset_index(drop=True), population.reset_index(drop=True),
                       supplemental, recipient_margin, top_down,
                       base_year=meta.periods.base_year, last_year=meta.periods.history_end)

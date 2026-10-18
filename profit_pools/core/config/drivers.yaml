@@ -70,6 +70,15 @@ drivers:
     stage: 4
     scope_kind: spending
     methods: [pct]
+  member_cost_share:
+    label: Member cost share (share of allowed)
+    unit: ratio
+    stage: 4
+    scope_kind: spending
+    methods: [pp, set]
+    note: >-
+      Moves dollars between payer-paid and consumer spend. Recipient revenue
+      (allowed) is unchanged; payer paid claims and gain change.
   utilization:
     label: Utilization (instances per 1,000)
     unit: instances_per_1000

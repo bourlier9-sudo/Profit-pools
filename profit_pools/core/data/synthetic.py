@@ -10,19 +10,22 @@ Construction (every identity holds exactly):
 ENTERPRISE (observed book), per year × county × LOB
     members                = market members × enterprise share
     allowed_c              = allowed_pmpm_c × members × 12           per claims category c
+    paid_c                 = allowed_c × (1 − member cost share_c)
     instances_c            = allowed_c / avg allowed per instance    (categories with instances)
-    CLAIMS_EXPENSE         = Σ_c allowed_c
+    ALLOWED_SPEND          = Σ_c allowed_c
+    CLAIMS_EXPENSE         = Σ_c paid_c                              (payer-paid claims)
     REVENUE                = CLAIMS_EXPENSE / MLR
     OPERATING_GAIN         = REVENUE − CLAIMS_EXPENSE − residual opex
 
 MARKET (estimated), per year × county × LOB
     members                synthetic market enrollment
     allowed_pmpm_c         = enterprise state-level PMPM_c × market factor   (PMPM benchmark)
+    paid_c / allowed_c     = enterprise state-level paid ratio_c
     instances_c            = enterprise state-level instances per member × members
     REVENUE                = members × 12 × enterprise state premium PMPM × market factor
     OPERATING_GAIN         = REVENUE × estimated market margin
   plus non-pool funding (market only)
-    uninsured / trad. Medicare flows = POPULATION × estimated PMPM_c
+    uninsured / trad. Medicare flows = POPULATION × estimated PMPM_c   (uninsured: all self-pay)
     supplemental payments            = annual estimate by state, hospital leaves only
 
 Recipients, per dataset × year × state × leaf
@@ -114,6 +117,17 @@ INSTANCE_PRICE = dict(IP_MEDSURG=24000, IP_MATERNITY=14000, OP_ED=2200, OP_SURG=
 INSTANCE_PRICE_TREND = 0.032
 LOB_GROUP_PRICE = {"COMM": 1.00, "MCR": 0.78, "MCD": 0.62}
 COVID_2020 = 0.90
+
+# Member cost share (share of allowed paid by the consumer) = LOB base × category factor.
+MEMBER_SHARE_LOB = {"COMM_IND": 0.26, "COMM_SG": 0.19, "COMM_LG": 0.15, "MA_IND": 0.10, "MA_GRP": 0.08,
+                    "MA_SNP": 0.03, "MCD_TANF": 0.01, "MCD_EXP": 0.02, "MCD_ABD": 0.01}
+MEMBER_SHARE_CATEGORY = dict(IP_MEDSURG=0.55, IP_MATERNITY=0.75, OP_ED=1.1, OP_SURG=1.0, OP_OTHER=1.2,
+                             IP_PSYCH=0.8, IP_REHAB=0.6, PROF_PRIMARY=1.4, PROF_SPEC=1.3, PROF_BH=1.4,
+                             SNF=0.8, HOME_HEALTH=0.3, ASC=1.0, IMAGING=1.3, RX_CHAIN_BRAND=1.3,
+                             RX_CHAIN_GENERIC=2.2, RX_INDEP_BRAND=1.3, RX_INDEP_GENERIC=2.2,
+                             RX_SPEC_HEALTHSYS=0.45, RX_SPEC_INDEP=0.45, RX_MAIL=1.1)
+# Non-pool funding: share of allowed paid by the consumer (uninsured = all self-pay).
+FUNDING_MEMBER_SHARE = {"FS_UNINSURED": 1.0, "FS_TRAD_MCR": 0.17}
 
 # --- Non-pool funding (market only) ------------------------------------------
 FUNDING_PARAMS = {
@@ -225,11 +239,13 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
     # enterprise state-level accumulators for benchmarks
     st_mm12 = defaultdict(float)          # (y, s, lob) → member-months
     st_allowed = defaultdict(float)       # (y, s, lob, cat)
+    st_paid = defaultdict(float)          # (y, s, lob, cat)
     st_inst = defaultdict(float)          # (y, s, lob, cat)
     st_rev = defaultdict(float)           # (y, s, lob)
     st_gain = defaultdict(float)          # (y, s, lob)
     nat_mm12 = defaultdict(float)
     nat_allowed = defaultdict(float)
+    nat_paid = defaultdict(float)
     nat_inst = defaultdict(float)
     nat_rev = defaultdict(float)
     nat_gain = defaultdict(float)
@@ -260,6 +276,7 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
                     members = m_members * float(np.clip(share * county_share[(county_id, lob)], 0.01, 0.9))
                     mm12 = members * 12
                     claims = 0.0
+                    allowed_total = 0.0
                     for cat in cats:
                         sh = mixes[grp].get(cat.id, 0.0)
                         pmpm = (p["allowed_pmpm"] * sh * state.price_index
@@ -267,6 +284,8 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
                                 * cell_util[(cat.id, lob, state.id)]
                                 * (COVID_2020 if year == 2020 else 1.0) * rng.normal(1.0, 0.02))
                         allowed = pmpm * mm12
+                        paid = allowed * (1 - min(0.8, MEMBER_SHARE_LOB.get(lob, 0.1)
+                                                  * MEMBER_SHARE_CATEGORY.get(cat.id, 1.0) * rng.normal(1, 0.03)))
                         inst = None
                         if cat.has_instances:
                             price = (INSTANCE_PRICE[cat.id] * LOB_GROUP_PRICE[grp] * state.price_index
@@ -274,14 +293,17 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
                             inst = allowed / price
                             st_inst[(year, state.id, lob, cat.id)] += inst
                             nat_inst[(year, lob, cat.id)] += inst
-                        claims += allowed
+                        claims += paid
+                        allowed_total += allowed
                         st_allowed[(year, state.id, lob, cat.id)] += allowed
+                        st_paid[(year, state.id, lob, cat.id)] += paid
+                        nat_paid[(year, lob, cat.id)] += paid
                         nat_allowed[(year, lob, cat.id)] += allowed
                         flow_rows.append(dict(
                             DATASET="ENTERPRISE", YEAR=year, GEO_LEVEL="county", STATE=state.id,
                             COUNTY=county_id, SOURCE_NODE_ID=leaf.id, TARGET_NODE_ID=cat.target,
                             PAYER_LOB=lob, SPENDING_CATEGORY=cat.id, FLOW_KIND="payer_claims",
-                            ANNUAL_FLOW_AMOUNT=allowed, INSTANCE_COUNT=inst,
+                            ANNUAL_FLOW_AMOUNT=allowed, PAID_AMOUNT=paid, INSTANCE_COUNT=inst,
                             ALLOCATION_METHOD="observed_claims", SOURCE_TYPE="observed"))
                     revenue = claims / mlr
                     gain = revenue - claims - revenue * opex_ratio
@@ -295,8 +317,9 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
                     metric_rows.append(dict(
                         DATASET="ENTERPRISE", YEAR=year, GEO_LEVEL="county", STATE=state.id, COUNTY=county_id,
                         **_levels(leaf, meta), LOB=lob, ENROLLMENT=members, REVENUE=revenue,
-                        CLAIMS_EXPENSE=claims, OPERATING_GAIN=gain, OPERATING_MARGIN=gain / revenue,
-                        REVENUE_PMPM=revenue / mm12, SPEND_PMPM=claims / mm12,
+                        CLAIMS_EXPENSE=claims, ALLOWED_SPEND=allowed_total, OPERATING_GAIN=gain,
+                        OPERATING_MARGIN=gain / revenue, REVENUE_PMPM=revenue / mm12,
+                        ALLOWED_PMPM=allowed_total / mm12, PAID_PMPM=claims / mm12,
                         SOURCE_TYPE="observed", COVERAGE_LEVEL=leaf.coverage))
 
     # ---- MARKET payers from enterprise PMPM benchmarks ---------------------
@@ -309,6 +332,7 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
         if st_mm12.get((year, s, lob), 0) > 0:
             base_mm = st_mm12[(year, s, lob)]
             allowed_src = lambda c: st_allowed[(year, s, lob, c)] / base_mm  # noqa: E731
+            paid_ratio = lambda c: st_paid[(year, s, lob, c)] / st_allowed[(year, s, lob, c)]  # noqa: E731
             inst_src = lambda c: st_inst[(year, s, lob, c)] / base_mm  # noqa: E731
             prem_pmpm = st_rev[(year, s, lob)] / base_mm
             margin = st_gain[(year, s, lob)] / st_rev[(year, s, lob)]
@@ -317,29 +341,35 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
             base_mm = nat_mm12[(year, lob)]
             px = state.price_index / (nat_px[(year, lob)] / base_mm)
             allowed_src = lambda c: nat_allowed[(year, lob, c)] / base_mm  # noqa: E731
+            paid_ratio = lambda c: nat_paid[(year, lob, c)] / nat_allowed[(year, lob, c)]  # noqa: E731
             inst_src = lambda c: nat_inst[(year, lob, c)] / base_mm  # noqa: E731
             prem_pmpm = nat_rev[(year, lob)] / base_mm
             margin = nat_gain[(year, lob)] / nat_rev[(year, lob)]
         claims = 0.0
+        allowed_total = 0.0
         for cat in cats:
             allowed = allowed_src(cat.id) * px * fac * mm12
             if allowed <= 0:
                 continue
+            paid = allowed * paid_ratio(cat.id)
             inst = inst_src(cat.id) * mm12 if cat.has_instances else None
-            claims += allowed
+            claims += paid
+            allowed_total += allowed
             flow_rows.append(dict(
                 DATASET="MARKET", YEAR=year, GEO_LEVEL="county", STATE=s, COUNTY=county_id,
                 SOURCE_NODE_ID=leaf.id, TARGET_NODE_ID=cat.target, PAYER_LOB=lob,
                 SPENDING_CATEGORY=cat.id, FLOW_KIND="payer_claims", ANNUAL_FLOW_AMOUNT=allowed,
-                INSTANCE_COUNT=inst, ALLOCATION_METHOD="pmpm_benchmark", SOURCE_TYPE="estimated"))
+                PAID_AMOUNT=paid, INSTANCE_COUNT=inst, ALLOCATION_METHOD="pmpm_benchmark",
+                SOURCE_TYPE="estimated"))
         revenue = prem_pmpm * px * fac * mm12
         m_margin = margin + MARKET_MARGIN_OFFSET[grp] + rng.normal(0, 0.003)
         gain = revenue * m_margin
         metric_rows.append(dict(
             DATASET="MARKET", YEAR=year, GEO_LEVEL="county", STATE=s, COUNTY=county_id,
             **_levels(leaf, meta), LOB=lob, ENROLLMENT=members, REVENUE=revenue, CLAIMS_EXPENSE=claims,
-            OPERATING_GAIN=gain, OPERATING_MARGIN=m_margin, REVENUE_PMPM=revenue / mm12,
-            SPEND_PMPM=claims / mm12, SOURCE_TYPE="estimated", COVERAGE_LEVEL=leaf.coverage))
+            ALLOWED_SPEND=allowed_total, OPERATING_GAIN=gain, OPERATING_MARGIN=m_margin,
+            REVENUE_PMPM=revenue / mm12, ALLOWED_PMPM=allowed_total / mm12, PAID_PMPM=claims / mm12,
+            SOURCE_TYPE="estimated", COVERAGE_LEVEL=leaf.coverage))
 
     # ---- MARKET non-pool funding -------------------------------------------
     market_funding = meta.datasets["MARKET"].funding_sources
@@ -369,7 +399,10 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
                             DATASET="MARKET", YEAR=year, GEO_LEVEL="county", STATE=state.id, COUNTY=county_id,
                             SOURCE_NODE_ID=fs_id, TARGET_NODE_ID=cat.target, PAYER_LOB=None,
                             SPENDING_CATEGORY=cat.id, FLOW_KIND="funding_pmpm",
-                            ANNUAL_FLOW_AMOUNT=pmpm * pop * 12, INSTANCE_COUNT=None,
+                            ANNUAL_FLOW_AMOUNT=pmpm * pop * 12,
+                            PAID_AMOUNT=pmpm * pop * 12 * (1 - FUNDING_MEMBER_SHARE.get(fs_id, 0.0)
+                                                           * (1.4 if cat.id.startswith("RX_") and fs_id != "FS_UNINSURED" else 1.0)),
+                            INSTANCE_COUNT=None,
                             ALLOCATION_METHOD="population_pmpm_estimate", SOURCE_TYPE="estimated"))
 
     flows = pd.DataFrame(flow_rows)
@@ -386,7 +419,7 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
             sup_rows.append(dict(
                 DATASET="MARKET", YEAR=year, GEO_LEVEL="state", STATE=s, COUNTY=None,
                 SOURCE_NODE_ID=fs_id, TARGET_NODE_ID=tgt, PAYER_LOB=None, SPENDING_CATEGORY=None,
-                FLOW_KIND="supplemental", ANNUAL_FLOW_AMOUNT=amt * rate, INSTANCE_COUNT=None,
+                FLOW_KIND="supplemental", ANNUAL_FLOW_AMOUNT=amt * rate, PAID_AMOUNT=amt * rate, INSTANCE_COUNT=None,
                 ALLOCATION_METHOD="supplemental_estimate", SOURCE_TYPE="estimated"))
         flows = pd.concat([flows, pd.DataFrame(sup_rows)], ignore_index=True)
 
@@ -410,9 +443,10 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
         margin = margins[(year, s, leaf_id)]
         metric_rows.append(dict(
             DATASET=ds, YEAR=year, GEO_LEVEL="state", STATE=s, COUNTY=None, **_levels(leaf, meta),
-            LOB=None, ENROLLMENT=None, REVENUE=revenue, CLAIMS_EXPENSE=None,
+            LOB=None, ENROLLMENT=None, REVENUE=revenue, CLAIMS_EXPENSE=None, ALLOWED_SPEND=None,
             OPERATING_GAIN=None if margin is None else revenue * margin, OPERATING_MARGIN=margin,
-            REVENUE_PMPM=None, SPEND_PMPM=None, SOURCE_TYPE="allocated", COVERAGE_LEVEL=leaf.coverage))
+            REVENUE_PMPM=None, ALLOWED_PMPM=None, PAID_PMPM=None, SOURCE_TYPE="allocated",
+            COVERAGE_LEVEL=leaf.coverage))
 
     # ---- Top-down leaves (market only) -------------------------------------
     for leaf in meta.leaves_in_dataset("MARKET"):
@@ -426,8 +460,9 @@ def generate(seed: int = DEFAULT_SEED, meta: Metadata | None = None) -> Syntheti
             metric_rows.append(dict(
                 DATASET="MARKET", YEAR=year, GEO_LEVEL="national", STATE=NATIONAL, COUNTY=None,
                 **_levels(leaf, meta), LOB=None, ENROLLMENT=None, REVENUE=revenue, CLAIMS_EXPENSE=None,
-                OPERATING_GAIN=None if margin is None else revenue * margin, OPERATING_MARGIN=margin,
-                REVENUE_PMPM=None, SPEND_PMPM=None, SOURCE_TYPE="estimated", COVERAGE_LEVEL=leaf.coverage))
+                ALLOWED_SPEND=None, OPERATING_GAIN=None if margin is None else revenue * margin,
+                OPERATING_MARGIN=margin, REVENUE_PMPM=None, ALLOWED_PMPM=None, PAID_PMPM=None,
+                SOURCE_TYPE="estimated", COVERAGE_LEVEL=leaf.coverage))
 
     return SyntheticBundle(
         pool_metrics=_conform(pd.DataFrame(metric_rows), POOL_METRICS_COLUMNS),

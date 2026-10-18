@@ -49,11 +49,13 @@ POOL_METRICS_COLUMNS: tuple[Column, ...] = (
     Column("LOB", "str", True, "-", "Payer LOB for payer rows; null otherwise."),
     Column("ENROLLMENT", "float", True, "avg members", "Average members in year (member-months / 12). Payer only."),
     Column("REVENUE", "float", False, "USD/yr", "Annual revenue."),
-    Column("CLAIMS_EXPENSE", "float", True, "USD/yr", "Payer claims expense = allowed spend (see caveats). Payer only."),
+    Column("CLAIMS_EXPENSE", "float", True, "USD/yr", "Payer-paid claims (allowed − member cost share). Payer only."),
+    Column("ALLOWED_SPEND", "float", True, "USD/yr", "Allowed spend incl. member cost share. Payer only."),
     Column("OPERATING_GAIN", "float", True, "USD/yr", "Annual operating gain; null when margin unavailable."),
     Column("OPERATING_MARGIN", "float", True, "ratio", "Operating gain / revenue; null when unavailable."),
     Column("REVENUE_PMPM", "float", True, "USD PMPM", "REVENUE / (ENROLLMENT × 12). Payer only."),
-    Column("SPEND_PMPM", "float", True, "USD PMPM", "CLAIMS_EXPENSE / (ENROLLMENT × 12). Payer only."),
+    Column("ALLOWED_PMPM", "float", True, "USD PMPM", "ALLOWED_SPEND / (ENROLLMENT × 12). Payer only."),
+    Column("PAID_PMPM", "float", True, "USD PMPM", "CLAIMS_EXPENSE / (ENROLLMENT × 12). Payer only."),
     Column("SOURCE_TYPE", "str", False, "-", "observed / allocated / estimated."),
     Column("COVERAGE_LEVEL", "str", False, "-", "bottom_up / allocated / top_down."),
 )
@@ -65,7 +67,8 @@ VALUE_FLOWS_COLUMNS: tuple[Column, ...] = (
     Column("PAYER_LOB", "str", True, "-", "Payer LOB for payer_claims flows; null for funding-source flows."),
     Column("SPENDING_CATEGORY", "str", True, "-", "Claims category; null for supplemental flows."),
     Column("FLOW_KIND", "str", False, "-", "payer_claims / funding_pmpm / supplemental."),
-    Column("ANNUAL_FLOW_AMOUNT", "float", False, "USD/yr", "Annual amount (allowed $ for claims-based flows)."),
+    Column("ANNUAL_FLOW_AMOUNT", "float", False, "USD/yr", "Annual allowed amount = recipient receipts (payer/program-paid + consumer)."),
+    Column("PAID_AMOUNT", "float", False, "USD/yr", "Portion paid by the payer or program. Consumer spend = ANNUAL_FLOW_AMOUNT − PAID_AMOUNT."),
     Column("INSTANCE_COUNT", "float", True, "instances/yr", "Service instances; null unless the category carries instances."),
     Column("ALLOCATION_METHOD", "str", False, "-", "observed_claims / pmpm_benchmark / population_pmpm_estimate / supplemental_estimate."),
     Column("SOURCE_TYPE", "str", False, "-", "observed / estimated."),
@@ -164,8 +167,12 @@ def validate_pool_metrics(df: pd.DataFrame, meta: Metadata) -> list[Issue]:
         mm12 = payer["ENROLLMENT"] * 12
         if not _close(payer["REVENUE"], payer["REVENUE_PMPM"] * mm12).all():
             issues.append(Issue("error", "payer.revenue_pmpm", "REVENUE ≠ REVENUE_PMPM × ENROLLMENT × 12"))
-        if not _close(payer["CLAIMS_EXPENSE"], payer["SPEND_PMPM"] * mm12).all():
-            issues.append(Issue("error", "payer.spend_pmpm", "CLAIMS_EXPENSE ≠ SPEND_PMPM × ENROLLMENT × 12"))
+        if not _close(payer["CLAIMS_EXPENSE"], payer["PAID_PMPM"] * mm12).all():
+            issues.append(Issue("error", "payer.paid_pmpm", "CLAIMS_EXPENSE ≠ PAID_PMPM × ENROLLMENT × 12"))
+        if not _close(payer["ALLOWED_SPEND"], payer["ALLOWED_PMPM"] * mm12).all():
+            issues.append(Issue("error", "payer.allowed_pmpm", "ALLOWED_SPEND ≠ ALLOWED_PMPM × ENROLLMENT × 12"))
+        if (payer["CLAIMS_EXPENSE"] > payer["ALLOWED_SPEND"] + 1e-6).any():
+            issues.append(Issue("error", "payer.paid_gt_allowed", "Paid claims exceed allowed spend"))
         if (payer["ENROLLMENT"] <= 0).any():
             issues.append(Issue("error", "payer.enrollment", "Payer rows must have positive enrollment"))
         if (payer["LOB"] != payer["NODE_ID"].map(lambda i: tax[i].lob)).any():
@@ -182,7 +189,8 @@ def validate_pool_metrics(df: pd.DataFrame, meta: Metadata) -> list[Issue]:
             if j["MKT"].isna().any() or (j["ENT"] > j["MKT"] + 1e-6).any():
                 issues.append(Issue("error", "dataset.subset", "Enterprise enrollment exceeds market enrollment"))
     nonpayer = df[econ != "payer_pnl"]
-    if nonpayer[["ENROLLMENT", "CLAIMS_EXPENSE", "REVENUE_PMPM", "SPEND_PMPM", "LOB"]].notna().any().any():
+    payer_only = ["ENROLLMENT", "CLAIMS_EXPENSE", "ALLOWED_SPEND", "REVENUE_PMPM", "ALLOWED_PMPM", "PAID_PMPM", "LOB"]
+    if nonpayer[payer_only].notna().any().any():
         issues.append(Issue("error", "recipient.payer_fields", "Payer-only fields populated on non-payer rows"))
 
     has_m = df["OPERATING_MARGIN"].notna()
@@ -244,8 +252,10 @@ def validate_value_flows(flows: pd.DataFrame, metrics: pd.DataFrame, pop: pd.Dat
         bad = set(flows[col]) - allowed
         if bad:
             issues.append(Issue("error", f"flow.{col.lower()}", f"Unknown {col} {sorted(bad)}"))
-    if (flows["ANNUAL_FLOW_AMOUNT"] < 0).any():
+    if (flows["ANNUAL_FLOW_AMOUNT"] < 0).any() or (flows["PAID_AMOUNT"] < 0).any():
         issues.append(Issue("error", "flow.negative", "Negative flow amounts"))
+    if (flows["PAID_AMOUNT"] > flows["ANNUAL_FLOW_AMOUNT"] * (1 + REL_TOL) + 1e-6).any():
+        issues.append(Issue("error", "flow.paid_gt_allowed", "PAID_AMOUNT exceeds the allowed amount"))
 
     targets = set(flows["TARGET_NODE_ID"])
     bad_t = sorted(t for t in targets if t not in tax or not tax[t].receives_flows or not tax[t].is_leaf)
@@ -289,6 +299,8 @@ def validate_value_flows(flows: pd.DataFrame, metrics: pd.DataFrame, pop: pd.Dat
             issues.append(Issue("error", "flow.supplemental_target", "Supplemental payments to non-eligible leaves"))
         if sup["SPENDING_CATEGORY"].notna().any() or sup["INSTANCE_COUNT"].notna().any():
             issues.append(Issue("error", "flow.supplemental_fields", "Supplemental flows carry no category or instances"))
+        if not _close(sup["PAID_AMOUNT"], sup["ANNUAL_FLOW_AMOUNT"]).all():
+            issues.append(Issue("error", "flow.supplemental_paid", "Supplemental payments are fully program-paid"))
 
     mapped = flows[flows["SPENDING_CATEGORY"].notna()]
     if (mapped["SPENDING_CATEGORY"].map(lambda c: meta.categories[c].target) != mapped["TARGET_NODE_ID"]).any():
@@ -303,16 +315,18 @@ def validate_value_flows(flows: pd.DataFrame, metrics: pd.DataFrame, pop: pd.Dat
         if (inst["INSTANCE_COUNT"] <= 0).any():
             issues.append(Issue("error", "instances.nonpositive", "Instance counts must be positive"))
 
-    # 1) Payer claims expense = Σ payer_claims flows from that payer cell.
+    # 1) Payer paid claims = Σ PAID_AMOUNT and allowed = Σ ANNUAL_FLOW_AMOUNT of payer_claims flows.
     tax_econ = metrics["NODE_ID"].map(lambda i: tax[i].economics)
     payer = metrics[tax_econ == "payer_pnl"]
     gkey = ["DATASET", "YEAR", "STATE", "COUNTY", "SOURCE_NODE_ID"]
-    claims = pc.groupby(gkey, dropna=False)["ANNUAL_FLOW_AMOUNT"].sum()
+    sums = pc.groupby(gkey, dropna=False)[["ANNUAL_FLOW_AMOUNT", "PAID_AMOUNT"]].sum()
     p = payer.set_index(["DATASET", "YEAR", "STATE", "COUNTY", "NODE_ID"])
     p.index.names = gkey
-    joined = p[["CLAIMS_EXPENSE"]].join(claims.rename("FLOWS"), how="outer")
-    if joined.isna().any().any() or not _close(joined["CLAIMS_EXPENSE"], joined["FLOWS"]).all():
-        issues.append(Issue("error", "reconcile.claims", "Payer CLAIMS_EXPENSE does not equal Σ payer_claims flows"))
+    joined = p[["CLAIMS_EXPENSE", "ALLOWED_SPEND"]].join(sums, how="outer")
+    if (joined.isna().any().any() or not _close(joined["CLAIMS_EXPENSE"], joined["PAID_AMOUNT"]).all()
+            or not _close(joined["ALLOWED_SPEND"], joined["ANNUAL_FLOW_AMOUNT"]).all()):
+        issues.append(Issue("error", "reconcile.claims",
+                            "Payer CLAIMS_EXPENSE / ALLOWED_SPEND do not equal Σ payer_claims flows (paid / allowed)"))
 
     # 2) Population-based funding flows need a population row.
     fp = flows[kind == "funding_pmpm"]

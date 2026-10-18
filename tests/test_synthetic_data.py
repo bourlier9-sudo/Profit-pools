@@ -37,7 +37,9 @@ def rows(df, ds, **eq):
 def test_pmpm_to_annual_conversion(bundle, ds):
     p = rows(bundle.pool_metrics, ds, LAYER_ID="PAYER")
     np.testing.assert_allclose(p["REVENUE"], p["REVENUE_PMPM"] * p["ENROLLMENT"] * 12, rtol=1e-12)
-    np.testing.assert_allclose(p["CLAIMS_EXPENSE"], p["SPEND_PMPM"] * p["ENROLLMENT"] * 12, rtol=1e-12)
+    np.testing.assert_allclose(p["CLAIMS_EXPENSE"], p["PAID_PMPM"] * p["ENROLLMENT"] * 12, rtol=1e-12)
+    np.testing.assert_allclose(p["ALLOWED_SPEND"], p["ALLOWED_PMPM"] * p["ENROLLMENT"] * 12, rtol=1e-12)
+    assert (p["CLAIMS_EXPENSE"] < p["ALLOWED_SPEND"]).all()
 
 
 @pytest.mark.parametrize("ds", DATASETS)
@@ -53,9 +55,10 @@ def test_claims_flows_reconcile_to_payer_claims_at_every_grain(bundle, ds):
     claims = rows(bundle.value_flows, ds, FLOW_KIND="payer_claims")
     for keys in (["YEAR"], ["YEAR", "STATE"], ["YEAR", "PAYER_LOB"], ["YEAR", "STATE", "COUNTY"]):
         pk = [("LOB" if k == "PAYER_LOB" else k) for k in keys]
-        a = p.groupby(pk)["CLAIMS_EXPENSE"].sum().sort_index()
-        b = claims.groupby(keys)["ANNUAL_FLOW_AMOUNT"].sum().sort_index()
-        np.testing.assert_allclose(a.to_numpy(), b.to_numpy(), rtol=1e-12)
+        a = p.groupby(pk)[["CLAIMS_EXPENSE", "ALLOWED_SPEND"]].sum().sort_index()
+        b = claims.groupby(keys)[["PAID_AMOUNT", "ANNUAL_FLOW_AMOUNT"]].sum().sort_index()
+        np.testing.assert_allclose(a["CLAIMS_EXPENSE"].to_numpy(), b["PAID_AMOUNT"].to_numpy(), rtol=1e-12)
+        np.testing.assert_allclose(a["ALLOWED_SPEND"].to_numpy(), b["ANNUAL_FLOW_AMOUNT"].to_numpy(), rtol=1e-12)
 
 
 @pytest.mark.parametrize("ds", DATASETS)
@@ -98,6 +101,20 @@ def test_enterprise_view_is_a_subset_of_market(bundle, meta):
     mr = rows(m, "MARKET", LAYER_ID="PROVIDER").set_index(rk)["REVENUE"]
     er = rows(m, "ENTERPRISE", LAYER_ID="PROVIDER").set_index(rk)["REVENUE"]
     assert (er < mr.loc[er.index]).all()
+
+
+def test_paid_and_consumer_spend(bundle):
+    f = bundle.value_flows
+    consumer = f["ANNUAL_FLOW_AMOUNT"] - f["PAID_AMOUNT"]
+    assert (consumer >= -1e-6).all()
+    by_src = (consumer.groupby(f["SOURCE_NODE_ID"]).sum() / f.groupby("SOURCE_NODE_ID")["ANNUAL_FLOW_AMOUNT"].sum())
+    assert np.isclose(by_src["FS_UNINSURED"], 1.0)                 # all self-pay
+    assert np.isclose(by_src["FS_SUPPLEMENTAL"], 0.0)              # fully program-paid
+    assert 0.1 < by_src["FS_TRAD_MCR"] < 0.3
+    assert by_src["PAY_COMM_IND"] > by_src["PAY_COMM_LG"] > by_src["PAY_MCD_TANF"]   # ACA > LG > Medicaid
+    pc = f[f["FLOW_KIND"] == "payer_claims"]
+    share = 1 - pc.groupby("SPENDING_CATEGORY")["PAID_AMOUNT"].sum() / pc.groupby("SPENDING_CATEGORY")["ANNUAL_FLOW_AMOUNT"].sum()
+    assert share["RX_CHAIN_GENERIC"] > share["IP_MEDSURG"]
 
 
 def test_market_pmpm_is_benchmarked_on_enterprise(bundle):
@@ -206,6 +223,13 @@ def test_validator_detects_flow_to_top_down(bundle, meta):
     f = bundle.value_flows.copy()
     f.loc[f.index[0], "TARGET_NODE_ID"] = "RX_PBM_COMM"
     assert "flow.target" in _codes(_vf(bundle, meta, flows=f))
+
+
+def test_validator_detects_paid_above_allowed(bundle, meta):
+    f = bundle.value_flows.copy()
+    i = f.index[f["FLOW_KIND"] == "payer_claims"][0]
+    f.loc[i, "PAID_AMOUNT"] = f.loc[i, "ANNUAL_FLOW_AMOUNT"] * 1.5
+    assert {"flow.paid_gt_allowed", "reconcile.claims"} <= _codes(_vf(bundle, meta, flows=f))
 
 
 def test_validator_detects_pharmacy_instances(bundle, meta):

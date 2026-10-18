@@ -7,8 +7,9 @@ the scenario engine (Phase 4) modifies the driver cube between stages.
   1  growth                   cube.project()          forecast-year driver levels
   5  payer financials         revenue = premium PMPM × mm; opex = opex PMPM × mm
   6  flows                    payer / funding flows = allowed PMPM × members|population × 12
-                              supplemental = annual amounts
-     payer claims             = Σ payer flows;  gain = revenue − claims − opex
+                              paid = allowed × paid ratio; consumer = allowed − paid
+                              supplemental = annual amounts (fully program-paid)
+     payer claims             = Σ PAID payer flows;  gain = revenue − paid claims − opex
   7  recipient financials     revenue = Σ inflows (county grain where flows are county;
                               supplemental at state grain); gain = revenue × pool margin
   8  top-down                 gain = revenue × margin
@@ -28,11 +29,11 @@ from profit_pools.core.taxonomy import Metadata
 
 POOL_COLUMNS = [
     "dataset", "year", "is_forecast", "geo_level", "state", "county", "node_id", "layer_id", "lob",
-    "members", "revenue", "claims", "opex", "gain", "margin_known", "source_type",
+    "members", "revenue", "revenue_paid", "allowed", "claims", "opex", "gain", "margin_known", "source_type",
 ]
 FLOW_COLUMNS = [
     "dataset", "year", "is_forecast", "state", "county", "source_id", "source_kind", "flow_kind",
-    "lob", "category", "target_id", "amount", "instances",
+    "lob", "category", "target_id", "amount", "paid", "consumer", "instances", "margin", "gain",
 ]
 
 
@@ -43,6 +44,11 @@ class ModelResult:
       recipient  dataset × year × state × county(or None for state-level supplemental) × leaf
       top-down   dataset × year × national × leaf
     `gain` is NaN where the margin is unavailable (margin_known = False).
+
+    Payer rows: `claims` = payer-paid claims, `allowed` = allowed spend (claims + member cost share).
+    Recipient rows: `revenue` = allowed receipts, `revenue_paid` = payer/program-paid part.
+    `flows.gain` = flow amount × target pool margin: the recipient gain associated with the flow
+    (sums to recipient gain); `flows.paid` / `flows.consumer` split each flow by who pays.
     """
 
     pools: pd.DataFrame
@@ -66,33 +72,40 @@ def run(cube: DriverCube, meta: Metadata, scenario_id: str | None = None) -> Mod
     spend = cube.spend.merge(_denominators(cube.payer, cube.population), on=POP_KEY,
                              how="left", validate="many_to_one")
     spend["amount"] = spend["allowed_pmpm"] * spend["denom"] * 12
+    spend["paid"] = spend["amount"] * spend["paid_ratio"]
     spend["instances"] = spend["inst_per_member"] * spend["denom"]
     spend["flow_kind"] = np.where(spend["source_kind"] == "payer", "payer_claims", "funding_pmpm")
     supp = cube.supplemental.assign(county=None, source_kind="funding", flow_kind="supplemental",
-                                    lob=None, category=None, instances=np.nan)
-    flows = pd.concat([spend.drop(columns=["denom", "allowed_pmpm", "inst_per_member"]), supp],
+                                    lob=None, category=None, instances=np.nan,
+                                    paid=cube.supplemental["amount"])
+    flows = pd.concat([spend.drop(columns=["denom", "allowed_pmpm", "paid_ratio", "inst_per_member"]), supp],
                       ignore_index=True)
+    flows["consumer"] = flows["amount"] - flows["paid"]
     flows["is_forecast"] = flows["year"] > base_year
+    flows = flows.merge(cube.recipient_margin.rename(columns={"node_id": "target_id"}),
+                        on=["dataset", "year", "state", "target_id"], how="left", validate="many_to_one")
+    flows["gain"] = flows["amount"] * flows["margin"]
     flows = flows[FLOW_COLUMNS]
 
-    claims = (flows[flows["flow_kind"] == "payer_claims"]
-              .groupby(["dataset", "year", "state", "county", "source_id"])["amount"].sum()
-              .rename("claims"))
-    claims.index.names = ["dataset", "year", "state", "county", "node_id"]
-    payer = payer.merge(claims.reset_index(), on=["dataset", "year", "state", "county", "node_id"], how="left")
-    payer["claims"] = payer["claims"].fillna(0.0)
+    sums = (flows[flows["flow_kind"] == "payer_claims"]
+            .groupby(["dataset", "year", "state", "county", "source_id"])[["paid", "amount"]].sum()
+            .rename(columns={"paid": "claims", "amount": "allowed"}))
+    sums.index.names = ["dataset", "year", "state", "county", "node_id"]
+    payer = payer.merge(sums.reset_index(), on=["dataset", "year", "state", "county", "node_id"], how="left")
+    payer[["claims", "allowed"]] = payer[["claims", "allowed"]].fillna(0.0)
     payer["gain"] = payer["revenue"] - payer["claims"] - payer["opex"]
     payer_rows = pd.DataFrame({
         "dataset": payer["dataset"], "year": payer["year"], "geo_level": "county",
         "state": payer["state"], "county": payer["county"], "node_id": payer["node_id"],
         "lob": payer["lob"], "members": payer["members"], "revenue": payer["revenue"],
-        "claims": payer["claims"], "opex": payer["opex"], "gain": payer["gain"], "margin_known": True,
+        "revenue_paid": np.nan, "allowed": payer["allowed"], "claims": payer["claims"], "opex": payer["opex"], "gain": payer["gain"], "margin_known": True,
         "source_type": payer["dataset"].map(payer_src),
     })
 
     # Stage 7 — recipients: revenue = Σ inflows at the flow grain; gain at the pool margin.
-    rec = (flows.groupby(["dataset", "year", "state", "county", "target_id"], dropna=False)["amount"]
-           .sum().rename("revenue").reset_index().rename(columns={"target_id": "node_id"}))
+    rec = (flows.groupby(["dataset", "year", "state", "county", "target_id"], dropna=False)[["amount", "paid"]]
+           .sum().rename(columns={"amount": "revenue", "paid": "revenue_paid"}).reset_index()
+           .rename(columns={"target_id": "node_id"}))
     rec = rec.merge(cube.recipient_margin, on=["dataset", "year", "state", "node_id"], how="left",
                     validate="many_to_one")
     rec["gain"] = rec["revenue"] * rec["margin"]
@@ -100,8 +113,8 @@ def run(cube: DriverCube, meta: Metadata, scenario_id: str | None = None) -> Mod
         "dataset": rec["dataset"], "year": rec["year"],
         "geo_level": np.where(rec["county"].isna(), "state", "county"),
         "state": rec["state"], "county": rec["county"], "node_id": rec["node_id"], "lob": None,
-        "members": np.nan, "revenue": rec["revenue"], "claims": np.nan,
-        "opex": rec["revenue"] - rec["gain"], "gain": rec["gain"], "margin_known": rec["margin"].notna(),
+        "members": np.nan, "revenue": rec["revenue"], "revenue_paid": rec["revenue_paid"],
+        "allowed": np.nan, "claims": np.nan, "opex": rec["revenue"] - rec["gain"], "gain": rec["gain"], "margin_known": rec["margin"].notna(),
         "source_type": "allocated",
     })
 
@@ -110,7 +123,8 @@ def run(cube: DriverCube, meta: Metadata, scenario_id: str | None = None) -> Mod
     td_rows = pd.DataFrame({
         "dataset": td["dataset"], "year": td["year"], "geo_level": "national",
         "state": meta.geography.national_id, "county": None, "node_id": td["node_id"], "lob": None,
-        "members": np.nan, "revenue": td["revenue"], "claims": np.nan,
+        "members": np.nan, "revenue": td["revenue"], "revenue_paid": np.nan, "allowed": np.nan,
+        "claims": np.nan,
         "opex": td["revenue"] * (1 - td["margin"]), "gain": td["revenue"] * td["margin"],
         "margin_known": td["margin"].notna(), "source_type": "estimated",
     })

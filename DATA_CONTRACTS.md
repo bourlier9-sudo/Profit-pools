@@ -43,26 +43,49 @@ Executable source of truth: `profit_pools/core/data/contracts.py` (column specs 
 Enterprise recipient gain is therefore *the part of the pool's profit associated with enterprise
 members*. It is not the enterprise's own profit.
 
-### 2.2 Payers (`economics: payer_pnl`)
+### 2.2 Allowed, paid and consumer spend
+
+Every claims-based flow carries both amounts:
+
+```
+allowed  (ANNUAL_FLOW_AMOUNT)  = everything the recipient receives for the service
+paid     (PAID_AMOUNT)         = the part paid by the payer or public program
+consumer = allowed − paid      = member cost sharing (deductibles, copays, coinsurance) and self-pay
+```
+
+| Source | Paid | Consumer |
+|---|---|---|
+| Payer segments | payer-paid claims | member cost sharing (varies by LOB and category) |
+| Uninsured & self-pay | 0 | all of it (self-pay, valued at allowed-equivalent) |
+| Traditional Medicare & public | program-paid | beneficiary cost sharing |
+| Supplemental & state payments | all of it | 0 |
+
+* **Recipient revenue is allowed** (paid + consumer).
+* **Payer claims expense is paid.**
+* The *spend basis* control (Allowed / Payer-paid / Consumer) shows any flow-based measure on one basis.
+  * Provider and pharmacy revenue and gain scale to that part at the pool's margin.
+  * Payer and top-down pools have no such split, and they are reported as unavailable under the paid or
+    consumer basis.
+
+### 2.3 Payers (`economics: payer_pnl`)
 
 ```
 REVENUE            = REVENUE_PMPM × ENROLLMENT × 12
-CLAIMS_EXPENSE     = Σ allowed spend over claims categories = SPEND_PMPM × ENROLLMENT × 12
+ALLOWED_SPEND      = Σ allowed over claims categories = ALLOWED_PMPM × ENROLLMENT × 12
+CLAIMS_EXPENSE     = Σ paid over claims categories    = PAID_PMPM × ENROLLMENT × 12
 OPERATING_GAIN     (observed for enterprise; estimated for market)
 residual_opex      = REVENUE − CLAIMS_EXPENSE − OPERATING_GAIN          DERIVED (not stored)
 ```
 
-* No administrative expense is reported. **Residual opex is a derived residual.**
+* No administrative expense is reported. **Residual opex is a derived residual** against *paid* claims.
 * In scenarios, residual opex **PMPM is held constant**, so it scales with enrollment. A user may enter an
   `opex_volume_scaling` assumption (the share of opex that varies with enrollment). The data offers no
   estimate of this.
-* Changes in allowed PMPM change claims and therefore payer gain. Premium is unchanged unless assumed.
+* Changes in allowed PMPM change paid claims (at the cell's paid ratio) and therefore payer gain. A
+  member-cost-share assumption moves dollars between paid and consumer without changing recipient revenue.
+  Premium is unchanged unless assumed.
 
-**Allowed-vs-paid caveat.** Allowed spend is used as both the payer's modeled claims outflow and the
-provider's receipt. Allowed amounts include member cost sharing, so derived residual opex absorbs the
-cost-sharing gap. The UI states this wherever claims or residual opex are shown.
-
-### 2.3 Flow recipients: provider and dispensing pharmacy (`economics: margin_on_revenue`)
+### 2.4 Flow recipients: provider and dispensing pharmacy (`economics: margin_on_revenue`)
 
 Revenue is the sum of **explicit, separately estimated components**. There is **no balancing plug**.
 
@@ -77,7 +100,7 @@ residual_opex  = REVENUE − OPERATING_GAIN              DERIVED
 There is no variable/fixed cost model and no operating leverage. Payer and recipient margin assumptions are
 separate drivers.
 
-### 2.4 Non-pool funding sources (`funding_sources.yaml`, MARKET only)
+### 2.5 Non-pool funding sources (`funding_sources.yaml`, MARKET only)
 
 | Id | Label | Basis | Grain | Targets |
 |---|---|---|---|---|
@@ -88,13 +111,13 @@ separate drivers.
 These are **not** payer profit pools. They never appear as Marimekko tiles. They appear as Sankey sources
 and as components of recipient revenue.
 
-### 2.5 Top-down pools (`economics: top_down`, MARKET only)
+### 2.6 Top-down pools (`economics: top_down`, MARKET only)
 
 Manufacturer, Health Services, and Pharmacy Benefit Services (`RX_PBM`, under the Pharmacy layer) carry
 national revenue and margin **estimates only**. They have no LOB, geography or flow detail. PBM Services
 appears in the Pharmacy column of the Marimekko and **never in value flows**.
 
-### 2.6 Service instances (optional volume decomposition)
+### 2.7 Service instances (optional volume decomposition)
 
 ```
 allowed (claims-based flow) = INSTANCE_COUNT × average allowed per instance
@@ -140,15 +163,17 @@ Grain: `DATASET × YEAR × STATE × COUNTY × NODE_ID × LOB` at the leaf's own 
 | `LOB` | str | yes | - | Payer LOB for payer rows; null otherwise. |
 | `ENROLLMENT` | float | yes | avg members | Average members in year (member-months / 12). Payer only. |
 | `REVENUE` | float | no | USD/yr | Annual revenue. |
-| `CLAIMS_EXPENSE` | float | yes | USD/yr | Payer claims expense = allowed spend (see caveats). Payer only. |
+| `CLAIMS_EXPENSE` | float | yes | USD/yr | Payer-paid claims (allowed − member cost share). Payer only. |
+| `ALLOWED_SPEND` | float | yes | USD/yr | Allowed spend incl. member cost share. Payer only. |
 | `OPERATING_GAIN` | float | yes | USD/yr | Annual operating gain; null when margin unavailable. |
 | `OPERATING_MARGIN` | float | yes | ratio | Operating gain / revenue; null when unavailable. |
 | `REVENUE_PMPM` | float | yes | USD PMPM | REVENUE / (ENROLLMENT × 12). Payer only. |
-| `SPEND_PMPM` | float | yes | USD PMPM | CLAIMS_EXPENSE / (ENROLLMENT × 12). Payer only. |
+| `ALLOWED_PMPM` | float | yes | USD PMPM | ALLOWED_SPEND / (ENROLLMENT × 12). Payer only. |
+| `PAID_PMPM` | float | yes | USD PMPM | CLAIMS_EXPENSE / (ENROLLMENT × 12). Payer only. |
 | `SOURCE_TYPE` | str | no | - | observed / allocated / estimated. |
 | `COVERAGE_LEVEL` | str | no | - | bottom_up / allocated / top_down. |
 
-There is deliberately no `ADMIN_EXPENSE` column. Residual opex is derived (§2.2).
+There is deliberately no `ADMIN_EXPENSE` column. Residual opex is derived (§2.3).
 
 | Layer / node | Row grain | Datasets | `SOURCE_TYPE` |
 |---|---|---|---|
@@ -170,7 +195,8 @@ There is deliberately no `ADMIN_EXPENSE` column. Residual opex is derived (§2.2
 | `PAYER_LOB` | str | yes | - | Payer LOB for payer_claims flows; null for funding-source flows. |
 | `SPENDING_CATEGORY` | str | yes | - | Claims category; null for supplemental flows. |
 | `FLOW_KIND` | str | no | - | payer_claims / funding_pmpm / supplemental. |
-| `ANNUAL_FLOW_AMOUNT` | float | no | USD/yr | Annual amount (allowed $ for claims-based flows). |
+| `ANNUAL_FLOW_AMOUNT` | float | no | USD/yr | Annual allowed amount = recipient receipts (payer/program-paid + consumer). |
+| `PAID_AMOUNT` | float | no | USD/yr | Portion paid by the payer or program. Consumer spend = ANNUAL_FLOW_AMOUNT − PAID_AMOUNT. |
 | `INSTANCE_COUNT` | float | yes | instances/yr | Service instances; null unless the category carries instances. |
 | `ALLOCATION_METHOD` | str | no | - | observed_claims / pmpm_benchmark / population_pmpm_estimate / supplemental_estimate. |
 | `SOURCE_TYPE` | str | no | - | observed / estimated. |
@@ -204,10 +230,15 @@ public programs). Payer-pool enrollment stays in `FACT_POOL_METRICS.ENROLLMENT`.
 1. Schema: all columns present, non-nullable complete, numeric types. Known `DATASET` values.
 2. Unique grain. `NODE_ID` is a known leaf, and `LAYER_ID` and `L1`–`L4` equal the taxonomy path. `GEO_LEVEL` and `COVERAGE_LEVEL` match the taxonomy.
 3. **Dataset exclusions:** no rows or flows for nodes excluded from a dataset, and no funding flows in a dataset without that source.
-4. Payer identities: `REVENUE = REVENUE_PMPM × ENROLLMENT × 12` and `CLAIMS_EXPENSE = SPEND_PMPM × ENROLLMENT × 12`. LOB matches the leaf, and `SOURCE_TYPE` matches the dataset.
+4. Payer identities:
+   * `REVENUE = REVENUE_PMPM × ENROLLMENT × 12`
+   * `CLAIMS_EXPENSE = PAID_PMPM × ENROLLMENT × 12`
+   * `ALLOWED_SPEND = ALLOWED_PMPM × ENROLLMENT × 12`
+   * paid ≤ allowed
+   * LOB matches the leaf, and `SOURCE_TYPE` matches the dataset.
 5. **Enterprise ⊆ market:** enterprise enrollment ≤ market enrollment in every year × county × LOB.
 6. `OPERATING_GAIN = REVENUE × OPERATING_MARGIN`, with both null together. Enterprise recipient margins equal the market pool margins.
-7. **Claims reconciliation:** payer `CLAIMS_EXPENSE` = Σ `payer_claims` flows for every dataset × year × county × payer leaf.
+7. **Claims reconciliation:** payer `CLAIMS_EXPENSE` = Σ `PAID_AMOUNT` and `ALLOWED_SPEND` = Σ `ANNUAL_FLOW_AMOUNT` of `payer_claims` flows, for every dataset × year × county × payer leaf. `0 ≤ PAID_AMOUNT ≤ ANNUAL_FLOW_AMOUNT`. Supplemental payments are fully paid.
 8. **Recipient reconciliation:** recipient `REVENUE` = Σ inflows of every kind for every dataset × year × state × leaf.
 9. Funding flows originate at a funding source, have a null LOB, and have a `FLOW_KIND` consistent with the source's basis. `funding_pmpm` flows have a population row.
 10. Supplemental payments go only to leaves under `targets_under`, and carry no category or instances.
@@ -228,6 +259,7 @@ Tolerance: relative 1e-9. The identities are exact by construction.
 | No enterprise presence | Westmoor (all LOBs); enterprise SNP in Southridge and Central Plains (market PMPMs fall back to the national benchmark, re-priced to the state) |
 | No instances | Home Health, Imaging; all pharmacy |
 | Coverage shifts | Uninsured population rises during the 2023–24 Medicaid unwinding |
+| Cost sharing | Highest for ACA and generic retail Rx; near zero for Medicaid; 100% for the uninsured; 0% for supplemental |
 | Top-down only | Manufacturer, Health Services, PBM Services |
 
 ---

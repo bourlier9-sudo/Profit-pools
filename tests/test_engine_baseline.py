@@ -76,9 +76,10 @@ def test_forecast_payer_identities(result, ds):
     p = result.pools[(result.pools["dataset"] == ds) & (result.pools["layer_id"] == "PAYER")]
     np.testing.assert_allclose(p["gain"], p["revenue"] - p["claims"] - p["opex"], rtol=1e-9)
     f = result.flows[(result.flows["dataset"] == ds) & (result.flows["flow_kind"] == "payer_claims")]
-    claims = f.groupby(["year", "county", "source_id"])["amount"].sum()
-    pc = p.set_index(["year", "county", "node_id"])["claims"]
-    np.testing.assert_allclose(pc.loc[claims.index], claims, rtol=1e-9)
+    sums = f.groupby(["year", "county", "source_id"])[["paid", "amount"]].sum()
+    pc = p.set_index(["year", "county", "node_id"])
+    np.testing.assert_allclose(pc.loc[sums.index, "claims"], sums["paid"], rtol=1e-9)      # claims = paid
+    np.testing.assert_allclose(pc.loc[sums.index, "allowed"], sums["amount"], rtol=1e-9)
 
 
 @pytest.mark.parametrize("ds", DATASETS)
@@ -244,3 +245,77 @@ def test_engine_is_fast(adapter, m):
     t = time.perf_counter()
     run(cube, m)
     assert time.perf_counter() - t < 3.0
+
+
+# --- paid / allowed / consumer -----------------------------------------------
+
+def test_flow_split_and_gain_attribution(result):
+    f = result.flows
+    np.testing.assert_allclose(f["consumer"], f["amount"] - f["paid"], rtol=1e-12)
+    # Flow gain sums to recipient gain wherever the margin is known.
+    p = result.pools[result.pools["revenue_paid"].notna() & result.pools["margin_known"]]
+    a = p.groupby(["dataset", "year", "node_id"])["gain"].sum()
+    b = f[f["margin"].notna()].groupby(["dataset", "year", "target_id"])["gain"].sum()
+    b.index.names = a.index.names
+    np.testing.assert_allclose(a.sort_index(), b.loc[a.index].sort_index(), rtol=1e-9)
+
+
+@pytest.mark.parametrize("ds", DATASETS)
+def test_spend_basis_views_reconcile(result, m, ds):
+    from profit_pools.core.model.views import rollup
+    allowed = rollup(result, m, ds, 2025, "PROVIDER").rows.set_index("node_id")
+    paid = rollup(result, m, ds, 2025, "PROVIDER", basis="paid").rows.set_index("node_id")
+    cons = rollup(result, m, ds, 2025, "PROVIDER", basis="consumer").rows.set_index("node_id")
+    for col in ("revenue", "revenue_with_margin", "gain"):
+        np.testing.assert_allclose(allowed[col], paid[col] + cons[col], rtol=1e-9)
+    # The pool margin applies to every basis: identical at leaf × state grain (aggregates differ by mix).
+    leaf_a = rollup(result, m, ds, 2025, "PRV_OP", Geo("state", "NVL")).rows.set_index("node_id")["margin"]
+    leaf_p = rollup(result, m, ds, 2025, "PRV_OP", Geo("state", "NVL"), "paid").rows.set_index("node_id")["margin"]
+    np.testing.assert_allclose(leaf_p, leaf_a.loc[leaf_p.index], rtol=1e-9)
+
+
+def test_spend_basis_excludes_unsplit_pools(result, m):
+    v = rollup(result, m, "MARKET", 2025, None, basis="consumer")
+    assert set(v.rows["node_id"]) == {"PROVIDER", "PHARMACY"}
+    assert {u.node_id for u in v.unavailable} == {"PAYER", "MANUFACTURER", "HEALTH_SERVICES"}
+    v = rollup(result, m, "MARKET", 2025, "PHARMACY", basis="paid")
+    assert [u.node_id for u in v.unavailable] == ["RX_PBM"]
+
+
+@pytest.mark.parametrize("segment_by", ["hierarchy", "geography", "funding"])
+@pytest.mark.parametrize("basis", ["allowed", "consumer"])
+@pytest.mark.parametrize("parent", [None, "PRV_HOSP", "PAY_COMM"])
+def test_marimekko_tiles_reconcile_to_rollup(result, m, segment_by, basis, parent):
+    from profit_pools.core.model.views import marimekko_tiles
+    if basis != "allowed" and parent == "PAY_COMM":
+        pytest.skip("payer pools have no paid/consumer split")
+    for geo in (Geo(), Geo("state", "NVL")):
+        cols = rollup(result, m, "MARKET", 2025, parent, geo, basis).rows.set_index("node_id")
+        tiles = marimekko_tiles(result, m, "MARKET", 2025, parent, geo, basis, segment_by).rows
+        sums = tiles.groupby("col_id")[["revenue", "gain", "revenue_with_margin"]].sum()
+        np.testing.assert_allclose(sums["revenue"], cols.loc[sums.index, "revenue"], rtol=1e-9)
+        np.testing.assert_allclose(sums["revenue_with_margin"], cols.loc[sums.index, "revenue_with_margin"], rtol=1e-9)
+        np.testing.assert_allclose(sums["gain"], cols.loc[sums.index, "gain"].fillna(0), rtol=1e-9, atol=1)
+        assert set(sums.index) == set(cols.index)
+        assert np.allclose(tiles.groupby("col_id")["share_in_col"].sum(), 1.0)
+
+
+def test_funding_segments_name_every_component(result, m):
+    from profit_pools.core.model.views import marimekko_tiles, revenue_components
+    tiles = marimekko_tiles(result, m, "MARKET", 2025, "PRV_HOSP", segment_by="funding").rows
+    labels = set(tiles["seg_label"])
+    assert {"Commercial", "Medicare Advantage", "Medicaid Managed Care", "Uninsured", "Supplemental"} <= labels
+    comp = revenue_components(result, m, "MARKET", 2025, "PRV_HOSP")
+    np.testing.assert_allclose(comp["allowed"], comp["paid"] + comp["consumer"], rtol=1e-12)
+    assert np.isclose(comp["share"].sum(), 1.0)
+    unins = comp.set_index("funder").loc["Uninsured"]
+    assert np.isclose(unins["paid"], 0.0)
+
+
+def test_change_drivers_sum_to_parent_change(result, m):
+    from profit_pools.core.model.views import change_drivers
+    d = change_drivers(result, m, "MARKET", 2025, "PROVIDER")
+    cur = rollup(result, m, "MARKET", 2025, None).rows.set_index("node_id").loc["PROVIDER", "revenue"]
+    prev = rollup(result, m, "MARKET", 2024, None).rows.set_index("node_id").loc["PROVIDER", "revenue"]
+    assert np.isclose(d["d_revenue"].sum(), cur - prev, rtol=1e-9)
+    assert np.isclose(d["share_of_change"].sum(), 1.0)

@@ -28,8 +28,19 @@ metrics:
     unit: members_avg
     additive: true
     provenance: {payer_pnl: estimated, margin_on_revenue: unavailable, top_down: unavailable}
+  allowed_spend:
+    label: Allowed spend
+    unit: usd_annual
+    additive: true
+    provenance: {payer_pnl: estimated, margin_on_revenue: allocated, top_down: unavailable}
+  consumer_spend:
+    label: Consumer spend (member cost share & self-pay)
+    unit: usd_annual
+    additive: true
+    formula: allowed − paid
+    provenance: {payer_pnl: derived, margin_on_revenue: derived, top_down: unavailable}
   claims_expense:
-    label: Claims expense (allowed)
+    label: Claims expense (payer-paid)
     unit: usd_annual
     additive: true
     provenance: {payer_pnl: estimated, margin_on_revenue: unavailable, top_down: unavailable}
@@ -45,8 +56,14 @@ metrics:
     additive: false
     formula: revenue / (enrollment × 12)
     provenance: {payer_pnl: derived, margin_on_revenue: unavailable, top_down: unavailable}
-  spend_pmpm:
+  allowed_pmpm:
     label: Allowed spend PMPM
+    unit: usd_pmpm
+    additive: false
+    formula: allowed_spend / (enrollment × 12)
+    provenance: {payer_pnl: derived, margin_on_revenue: unavailable, top_down: unavailable}
+  paid_pmpm:
+    label: Paid claims PMPM
     unit: usd_pmpm
     additive: false
     formula: claims_expense / (enrollment × 12)
