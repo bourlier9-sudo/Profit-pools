@@ -1,0 +1,65 @@
+# Geography — FICTIONAL states and counties. Names are invented so that no
+# figure can be mistaken for real market data.
+#   national  sentinel STATE = "US", COUNTY = null
+#   state     STATE = <id>, COUNTY = null
+#   county    STATE = <id>, COUNTY = <id>
+schema_version: 1
+
+national: {id: US, label: National (all fictional states)}
+
+states:
+  - id: NVL
+    label: Northvale
+    price_index: 1.08
+    medicaid_expansion_year: 2019
+    counties:
+      - {id: NVL-01, label: Harrow County, weight: 0.38}
+      - {id: NVL-02, label: Pinecrest County, weight: 0.27}
+      - {id: NVL-03, label: Ashby County, weight: 0.21}
+      - {id: NVL-04, label: Corran County, weight: 0.14}
+  - id: ESH
+    label: Eastshore
+    price_index: 1.14
+    medicaid_expansion_year: 2019
+    counties:
+      - {id: ESH-01, label: Baymouth County, weight: 0.46}
+      - {id: ESH-02, label: Saltmarsh County, weight: 0.31}
+      - {id: ESH-03, label: Linwood County, weight: 0.23}
+  - id: SRG
+    label: Southridge
+    price_index: 0.92
+    medicaid_expansion_year: null   # non-expansion state: no Expansion Adults LOB
+    counties:
+      - {id: SRG-01, label: Redclay County, weight: 0.33}
+      - {id: SRG-02, label: Mesa Verde County, weight: 0.25}
+      - {id: SRG-03, label: Dunmore County, weight: 0.22}
+      - {id: SRG-04, label: Tolliver County, weight: 0.12}
+      - {id: SRG-05, label: Quarry County, weight: 0.08}
+  - id: WMR
+    label: Westmoor
+    price_index: 1.02
+    medicaid_expansion_year: 2019
+    counties:
+      - {id: WMR-01, label: Fenwick County, weight: 0.52}
+      - {id: WMR-02, label: Highcairn County, weight: 0.30}
+      - {id: WMR-03, label: Elderbrook County, weight: 0.18}
+  - id: CLP
+    label: Central Plains
+    price_index: 0.95
+    medicaid_expansion_year: 2021   # expanded mid-history
+    counties:
+      - {id: CLP-01, label: Grainfield County, weight: 0.36}
+      - {id: CLP-02, label: Stillwater County, weight: 0.29}
+      - {id: CLP-03, label: Prairie Bend County, weight: 0.20}
+      - {id: CLP-04, label: Larkin County, weight: 0.15}
+  - id: LKD
+    label: Lakeland
+    price_index: 0.99
+    medicaid_expansion_year: 2019
+    counties:
+      - {id: LKD-01, label: Shorehaven County, weight: 0.44}
+      - {id: LKD-02, label: Birchwater County, weight: 0.34}
+      - {id: LKD-03, label: Kettle County, weight: 0.22}
+
+# Relative population size of each state (shares of the national total).
+state_weights: {NVL: 0.19, ESH: 0.22, SRG: 0.21, WMR: 0.12, CLP: 0.14, LKD: 0.12}

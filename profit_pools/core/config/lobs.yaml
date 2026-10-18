@@ -1,0 +1,23 @@
+# Payer lines of business — FICTIONAL. Two-level LOB hierarchy used by
+# filters, Sankey roll-ups and assumption scoping.
+schema_version: 1
+
+groups:
+  - {id: COMM, label: Commercial}
+  - {id: MCR, label: Medicare Advantage}
+  - {id: MCD, label: Medicaid Managed Care}
+
+lobs:
+  - {id: COMM_IND, label: Individual (ACA), group: COMM}
+  - {id: COMM_SG, label: Small Group FI, group: COMM}
+  - {id: COMM_LG, label: Large Group FI, group: COMM}
+  - {id: MA_IND, label: Individual MA, group: MCR}
+  - {id: MA_GRP, label: Group MA, group: MCR}
+  - {id: MA_SNP, label: Special Needs Plans, group: MCR}
+  - {id: MCD_TANF, label: TANF / CHIP, group: MCD}
+  - {id: MCD_EXP, label: Expansion Adults, group: MCD}
+  - {id: MCD_ABD, label: Aged, Blind & Disabled, group: MCD}
+
+# Pseudo-LOB used on unattributed residual flows (other payers, traditional
+# Medicare FFS, self-pay, etc.). Never modeled bottom-up.
+unmodeled_lob: {id: UNMODELED, label: Other payers & self-pay (not modeled)}

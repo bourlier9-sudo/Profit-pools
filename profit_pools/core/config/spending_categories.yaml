@@ -1,0 +1,113 @@
+# Spending categories — FICTIONAL. Each category maps payer allowed spend
+# to exactly one recipient leaf. Service units are category-specific and
+# are NEVER summed across categories (admissions + visits is meaningless).
+#
+# service_counts.reliable_lob_groups lists the LOB groups where service counts
+# are trustworthy. Volume (utilization / unit price) assumptions are only
+# offered for those cells; elsewhere only allowed-PMPM assumptions apply.
+schema_version: 1
+
+claims_categories:
+  - id: IP_ACUTE
+    label: Acute inpatient
+    target: PRV_HOSP_ACUTE
+    service_unit: admission
+    service_definition: Acute inpatient admissions (discharge-based), counted per year.
+    reliable_lob_groups: [COMM, MCR, MCD]
+  - id: OP_HOSP
+    label: Hospital outpatient
+    target: PRV_HOSP_ACUTE
+    service_unit: visit
+    service_definition: Hospital outpatient visits (unique member-date-facility), per year.
+    reliable_lob_groups: [COMM, MCR, MCD]
+  - id: IP_PSYCH
+    label: Psychiatric inpatient
+    target: PRV_HOSP_PSYCH
+    service_unit: inpatient_day
+    service_definition: Psychiatric inpatient days, per year.
+    reliable_lob_groups: [COMM, MCR]
+  - id: IP_REHAB
+    label: Inpatient rehabilitation
+    target: PRV_HOSP_REHAB
+    service_unit: admission
+    service_definition: Inpatient rehabilitation admissions, per year.
+    reliable_lob_groups: []
+  - id: PROF_PRIMARY
+    label: Primary care professional
+    target: PRV_PHYS_PRIMARY
+    service_unit: visit
+    service_definition: Primary care office and virtual visits, per year.
+    reliable_lob_groups: [COMM, MCR, MCD]
+  - id: PROF_SPEC
+    label: Specialty professional
+    target: PRV_PHYS_SPEC
+    service_unit: visit
+    service_definition: Specialist office and virtual visits, per year.
+    reliable_lob_groups: [COMM, MCR, MCD]
+  - id: PROF_BH
+    label: Behavioral health professional
+    target: PRV_PHYS_BH
+    service_unit: visit
+    service_definition: Behavioral health clinician sessions, per year.
+    reliable_lob_groups: [COMM, MCR]
+  - id: SNF
+    label: Skilled nursing
+    target: PRV_PAC_SNF
+    service_unit: facility_day
+    service_definition: Skilled nursing covered days, per year.
+    reliable_lob_groups: [MCR, MCD]
+  - id: HOME_HEALTH
+    label: Home health
+    target: PRV_PAC_HH
+    service_unit: episode
+    service_definition: Home health episodes, per year.
+    reliable_lob_groups: []
+  - id: ASC
+    label: Ambulatory surgery
+    target: PRV_AMB_ASC
+    service_unit: procedure
+    service_definition: ASC surgical procedures (primary procedure per case), per year.
+    reliable_lob_groups: [COMM, MCR]
+  - id: IMAGING
+    label: Freestanding imaging
+    target: PRV_AMB_IMG
+    service_unit: procedure
+    service_definition: Advanced and standard imaging studies, per year.
+    reliable_lob_groups: []
+  - id: RX_RETAIL
+    label: Retail pharmacy
+    target: RX_RETAIL
+    service_unit: script_30d
+    service_definition: Prescriptions normalized to 30-day equivalents, per year.
+    reliable_lob_groups: [COMM, MCR, MCD]
+  - id: RX_SPECIALTY
+    label: Specialty pharmacy
+    target: RX_SPECIALTY
+    service_unit: script_30d
+    service_definition: Prescriptions normalized to 30-day equivalents, per year.
+    reliable_lob_groups: [COMM, MCR, MCD]
+  - id: RX_MAIL
+    label: Mail-order pharmacy
+    target: RX_MAIL
+    service_unit: script_30d
+    service_definition: Prescriptions normalized to 30-day equivalents, per year.
+    reliable_lob_groups: [COMM, MCR]
+
+# Non-claims flows. These come out of payer residual operating expense,
+# not claims, and are estimates rather than observed.
+opex_categories:
+  - id: PAYER_SERVICES
+    label: Outsourced payer services
+    target: HS_PAYER_SVC
+    service_unit: null
+    service_definition: null
+    reliable_lob_groups: []
+
+service_units:
+  admission: {label: Admissions, singular: admission}
+  visit: {label: Visits, singular: visit}
+  inpatient_day: {label: Inpatient days, singular: inpatient day}
+  facility_day: {label: Facility days, singular: facility day}
+  episode: {label: Episodes, singular: episode}
+  procedure: {label: Procedures, singular: procedure}
+  script_30d: {label: Prescriptions (30-day eq.), singular: 30-day script}

@@ -1,0 +1,134 @@
+# Profit pool taxonomy — FICTIONAL. Drives the Marimekko, Sankey, filters,
+# assumption eligibility and aggregation. Depth is not fixed: any node may
+# have children, and only leaves carry data in the fact tables.
+#
+# Attributes inherit from parent to child unless overridden:
+#   economics    payer_pnl         revenue − claims − residual opex (payer)
+#                margin_on_revenue gain = revenue × observed operating margin
+#                top_down          revenue and margin are top-down estimates only
+#   coverage     bottom_up | allocated | top_down  (how revenue is built)
+#   geo_level    finest geography the data supports: county | state | national
+#   receives_flows  true when value flows can terminate at this node
+#
+# Adding a breakdown (e.g. splitting Behavioral Health Services into
+# Utilization Management / Provider Enablement / Network Management / Other)
+# means adding children here and supplying leaf-level data; no chart or
+# engine code changes.
+
+schema_version: 1
+
+layers:
+  - id: PAYER
+    label: Payer
+    economics: payer_pnl
+    coverage: bottom_up
+    geo_level: county
+    receives_flows: false
+    description: Risk-bearing health plans. Revenue is premium; claims are allowed spend.
+    children:
+      - id: PAY_COMM
+        label: Commercial
+        children:
+          - {id: PAY_COMM_IND, label: Individual (ACA), short_label: ACA, lob: COMM_IND}
+          - {id: PAY_COMM_SG, label: Small Group Fully Insured, short_label: Small Group, lob: COMM_SG}
+          - {id: PAY_COMM_LG, label: Large Group Fully Insured, short_label: Large Group, lob: COMM_LG}
+      - id: PAY_MA
+        label: Medicare Advantage
+        children:
+          - {id: PAY_MA_IND, label: Individual MA, short_label: Individual MA, lob: MA_IND}
+          - {id: PAY_MA_GRP, label: Group MA, short_label: Group MA, lob: MA_GRP}
+          - {id: PAY_MA_SNP, label: Special Needs Plans, short_label: SNP, lob: MA_SNP}
+      - id: PAY_MCD
+        label: Medicaid Managed Care
+        short_label: Medicaid
+        children:
+          - {id: PAY_MCD_TANF, label: TANF / CHIP, short_label: TANF/CHIP, lob: MCD_TANF}
+          - {id: PAY_MCD_EXP, label: Expansion Adults, short_label: Expansion, lob: MCD_EXP}
+          - {id: PAY_MCD_ABD, label: Aged, Blind & Disabled, short_label: ABD, lob: MCD_ABD}
+
+  - id: PROVIDER
+    label: Provider
+    economics: margin_on_revenue
+    coverage: allocated
+    geo_level: state
+    receives_flows: true
+    description: Care delivery. Revenue = attributed payer allowed spend + unattributed residual.
+    children:
+      - id: PRV_HOSP
+        label: Hospitals
+        children:
+          - {id: PRV_HOSP_ACUTE, label: General Acute Hospitals, short_label: Acute Hospitals}
+          - {id: PRV_HOSP_PSYCH, label: Psychiatric Hospitals, short_label: Psych Hospitals}
+          - {id: PRV_HOSP_REHAB, label: Rehabilitation Hospitals, short_label: Rehab Hospitals}
+      - id: PRV_PHYS
+        label: Physician & Clinical Services
+        short_label: Physician
+        children:
+          - {id: PRV_PHYS_PRIMARY, label: Primary Care, short_label: Primary Care}
+          - {id: PRV_PHYS_SPEC, label: Specialty Care, short_label: Specialty}
+          - {id: PRV_PHYS_BH, label: Behavioral Health Clinicians, short_label: BH Clinicians}
+      - id: PRV_PAC
+        label: Post-Acute Care
+        short_label: Post-Acute
+        children:
+          - {id: PRV_PAC_SNF, label: Skilled Nursing Facilities, short_label: SNF}
+          - {id: PRV_PAC_HH, label: Home Health, short_label: Home Health}
+      - id: PRV_AMB
+        label: Ambulatory Sites
+        short_label: Ambulatory
+        children:
+          - {id: PRV_AMB_ASC, label: Ambulatory Surgery Centers, short_label: ASC}
+          - {id: PRV_AMB_IMG, label: Imaging Centers, short_label: Imaging}
+
+  - id: PHARMACY
+    label: Pharmacy
+    economics: margin_on_revenue
+    coverage: allocated
+    geo_level: state
+    receives_flows: true
+    description: Dispensing pharmacies. Revenue = attributed pharmacy allowed spend + residual.
+    children:
+      # Leaves directly under the layer: hierarchy depth differs by layer on purpose.
+      - {id: RX_RETAIL, label: Retail Pharmacy, short_label: Retail Rx}
+      - {id: RX_SPECIALTY, label: Specialty Pharmacy, short_label: Specialty Rx}
+      - {id: RX_MAIL, label: Mail-Order Pharmacy, short_label: Mail Rx}
+
+  - id: MANUFACTURER
+    label: Manufacturer
+    economics: top_down
+    coverage: top_down
+    geo_level: national
+    receives_flows: false
+    description: >-
+      Top-down market estimates only. Not attributed to payer lines of business,
+      states or counties.
+    children:
+      - {id: MFR_BRAND, label: Branded Pharmaceuticals, short_label: Branded Rx}
+      - {id: MFR_GENERIC, label: Generic Pharmaceuticals, short_label: Generics}
+      - {id: MFR_DEVICE, label: Medical Devices, short_label: Devices}
+
+  - id: HEALTH_SERVICES
+    label: Health Services
+    economics: top_down
+    coverage: top_down
+    geo_level: national
+    receives_flows: false
+    description: Services sold to payers and providers. Mostly top-down estimates.
+    children:
+      - id: HS_PAYER_SVC
+        label: Payer Services & Technology
+        short_label: Payer Services
+        economics: margin_on_revenue
+        coverage: allocated
+        geo_level: state
+        receives_flows: true
+        description: >-
+          Partially attributed: an estimated share of payer residual operating
+          expense is allocated here; the remainder is an unattributed residual.
+      - id: HS_BH
+        label: Behavioral Health Services
+        short_label: BH Services
+        # Future breakdown example (configuration only):
+        # children: Utilization Management, Provider Enablement,
+        #           Network Management, Other Services
+      - {id: HS_PBS, label: Pharmacy Benefit Services, short_label: PBM Services}

@@ -1,0 +1,101 @@
+# Scenario driver catalog — which assumptions exist, where they may be
+# applied and how. The scenario engine (Phase 4) and the assumption builder
+# both read this file; nothing about eligibility is hardcoded in the UI.
+#
+# applies_to.economics   economics types whose nodes may be scoped
+# applies_to.requires    extra data conditions (e.g. reliable service counts)
+# methods                pct   multiplicative % change      (value 0.05 = +5%)
+#                        pp    additive percentage points   (value 0.01 = +1 pp)
+#                        set   absolute override of the driver level
+#                        delta additive change in driver units
+# stage                  pipeline stage that consumes the driver (see ARCHITECTURE.md)
+schema_version: 1
+
+drivers:
+  enrollment:
+    label: Enrollment
+    unit: members_avg
+    stage: 2
+    applies_to: {economics: [payer_pnl]}
+    methods: [pct, set, delta]
+  enrollment_shift:
+    label: Enrollment shift between segments
+    unit: members_avg
+    stage: 2
+    applies_to: {economics: [payer_pnl]}
+    methods: [delta]           # moves members from scope to a named target segment; sum-preserving
+  premium_pmpm:
+    label: Revenue PMPM
+    unit: usd_pmpm
+    stage: 3
+    applies_to: {economics: [payer_pnl]}
+    methods: [pct, set, delta]
+  opex_pmpm:
+    label: Residual operating expense PMPM
+    unit: usd_pmpm
+    stage: 3
+    applies_to: {economics: [payer_pnl]}
+    methods: [pct, set, delta]
+  payer_margin:
+    label: Payer operating margin
+    unit: ratio
+    stage: 3
+    applies_to: {economics: [payer_pnl]}
+    methods: [pp, set]
+    note: Solved through residual opex PMPM; revenue and claims are unchanged.
+  allowed_pmpm:
+    label: Allowed spend PMPM
+    unit: usd_pmpm
+    stage: 4
+    applies_to: {economics: [margin_on_revenue], flow_kind: claims}
+    lob_scoped: true
+    methods: [pct]
+  utilization:
+    label: Utilization (services per 1,000)
+    unit: count_annual
+    stage: 4
+    applies_to: {economics: [margin_on_revenue], flow_kind: claims, requires: [reliable_service_counts]}
+    lob_scoped: true
+    methods: [pct]
+  unit_price:
+    label: Average allowed per service
+    unit: usd_per_service
+    stage: 4
+    applies_to: {economics: [margin_on_revenue], flow_kind: claims, requires: [reliable_service_counts]}
+    lob_scoped: true
+    methods: [pct]
+  provider_margin:
+    label: Recipient operating margin
+    unit: ratio
+    stage: 7
+    applies_to: {economics: [margin_on_revenue]}
+    methods: [pp, set]
+    note: Never applied to payers; payer margin is a separate driver.
+  unattributed_revenue:
+    label: Unattributed revenue
+    unit: usd_annual
+    stage: 6
+    applies_to: {economics: [margin_on_revenue]}
+    methods: [pct]
+  top_down_revenue:
+    label: Top-down revenue
+    unit: usd_annual
+    stage: 8
+    applies_to: {economics: [top_down]}
+    methods: [pct, set]
+  top_down_margin:
+    label: Top-down operating margin
+    unit: ratio
+    stage: 8
+    applies_to: {economics: [top_down]}
+    methods: [pp, set]
+
+# Forecast-year growth drivers (annual rates). A CAGR entered here is an
+# INPUT; CAGRs shown in the UI are always computed from resulting values.
+growth_drivers:
+  enrollment_growth: {label: Enrollment growth, applies_to: [payer_pnl], stage: 1}
+  premium_trend: {label: Revenue PMPM trend, applies_to: [payer_pnl], stage: 1}
+  allowed_trend: {label: Allowed PMPM trend, applies_to: [margin_on_revenue], stage: 1}
+  opex_trend: {label: Residual opex PMPM trend, applies_to: [payer_pnl], stage: 1}
+  unattributed_growth: {label: Unattributed revenue growth, applies_to: [margin_on_revenue], stage: 1}
+  top_down_growth: {label: Top-down revenue growth, applies_to: [top_down], stage: 1}

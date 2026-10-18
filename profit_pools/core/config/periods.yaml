@@ -1,0 +1,9 @@
+# Period definitions. History = synthetic "observed" facts; forecast years
+# are produced by the model from baseline growth drivers (Phase 2+), never
+# stored as facts.
+schema_version: 1
+history_start: 2019
+history_end: 2025
+base_year: 2025
+forecast_end: 2031
+currency: USD (nominal)
