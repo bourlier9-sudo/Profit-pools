@@ -1,0 +1,56 @@
+# Methodology notes rendered in the assumption builder ("How is provider
+# revenue estimated?") and in the inspector. Plain text with light markdown.
+schema_version: 1
+
+provider_revenue:
+  title: How is provider and pharmacy revenue estimated?
+  MARKET: |
+    Market recipient revenue is built bottom-up from explicit components. There
+    is no balancing plug.
+
+    1. **Payer claims.** For each payer segment, market enrollment × allowed
+       PMPM by spending category. Market PMPMs are benchmarks derived from the
+       enterprise's own claims experience and adjusted to the market. Allowed
+       amounts include member cost sharing.
+    2. **Uninsured & self-pay.** Estimated uninsured population × estimated PMPM.
+    3. **Traditional Medicare & other public programs.** Covered population ×
+       estimated PMPM.
+    4. **Supplemental & state payments.** Annual estimates by state, paid to
+       hospitals only. Not tied to members or services.
+
+    Operating gain = revenue × the pool's operating margin. Margins stay
+    constant when spending changes unless a margin assumption changes them.
+    Remaining operating expense is a derived residual, not a modeled cost
+    structure.
+  ENTERPRISE: |
+    Enterprise recipient revenue is the enterprise's own allowed spend with
+    each pool, from observed claims (allowed = enrollment × allowed PMPM by
+    spending category). It excludes uninsured, public-program and supplemental
+    spending, and all other payers.
+
+    Operating gain = enterprise-attributable revenue × the pool's market
+    operating margin. This is the share of the pool's profit associated with
+    enterprise members, not the enterprise's own profit.
+  volume: |
+    Where a category has service-instance counts, allowed spend =
+    instances × average allowed per instance. Utilization (instances) and unit
+    price can then be changed separately. Both flow through to recipient
+    revenue at a constant margin. Pharmacy has no instance counts, because
+    pharmacy claim counts mix administrative and drug claims.
+
+payer_economics:
+  title: How are payer economics modeled?
+  body: |
+    Operating gain = revenue − claims expense − residual operating expense.
+    No administrative expense is reported. Residual operating expense is
+    derived from baseline revenue, claims and gain. In scenarios its PMPM is
+    held constant, so it scales with enrollment, unless you change it or set a
+    volume-scaling assumption. Claims expense is modeled as allowed spend, which
+    includes member cost sharing.
+
+top_down:
+  title: Top-down estimates
+  body: |
+    Manufacturer, Health Services and PBM Services are top-down market
+    estimates of revenue and margin. They have no payer, geographic or flow
+    detail, and are excluded from the enterprise view.

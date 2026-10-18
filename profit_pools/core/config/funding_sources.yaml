@@ -1,0 +1,35 @@
+# Non-pool funding sources (market dataset only). They pay recipients but are
+# NOT payer profit pools: they never appear as Marimekko payer tiles, only as
+# Sankey sources and as components of recipient revenue.
+#
+# basis
+#   population_pmpm  POPULATION (FACT_COVERAGE_POPULATION) × PMPM by spending category
+#   lump_sum         annual amounts by state and target leaf (no population)
+schema_version: 1
+
+funding_sources:
+  - id: FS_UNINSURED
+    label: Uninsured & self-pay
+    short_label: Uninsured
+    basis: population_pmpm
+    geo_level: county
+    description: >-
+      Estimated spending by and for uninsured residents (self-pay, charity care
+      at allowed-equivalent value), as uninsured population × estimated PMPM.
+  - id: FS_TRAD_MCR
+    label: Traditional Medicare & other public programs
+    short_label: Trad. Medicare & public
+    basis: population_pmpm
+    geo_level: county
+    description: >-
+      Fee-for-service Medicare and other public programs not run through a
+      managed-care profit pool, as covered population × estimated PMPM.
+  - id: FS_SUPPLEMENTAL
+    label: Supplemental & state payments
+    short_label: Supplemental
+    basis: lump_sum
+    geo_level: state
+    targets_under: [PRV_HOSP]   # only hospital leaves receive supplemental payments
+    description: >-
+      Directed, supplemental and state payments to hospitals, estimated as
+      annual amounts by state. Not tied to members or services.

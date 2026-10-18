@@ -21,7 +21,7 @@ and the Plotly template, so the UI and the charts can't drift apart.
 | Frame | 1440 wide. Auto-layout vertical. Background `--bg` |
 | Left nav | 216 fixed. Module list and footer (data source badge). Collapses to an icon rail (56) under 1200 |
 | Main column | Fluid. Horizontal padding 32. Max content width 1600 |
-| Global bar | Height 48, sticky top. Hairline bottom border. Items: Year · Geography · View (Baseline / Scenario / Compare) · Scope · Scenario chip · Export |
+| Global bar | Height 48, sticky top. Hairline bottom border. Items: **Dataset** (segmented: Total market / Enterprise) · Year · Geography · View (Baseline / Scenario / Compare) · Scope · Scenario chip · Export |
 | Section rhythm | 40 between sections (A–E), 16 between a section header and its content |
 | Grid | 12 columns, 24 gutter. Marimekko spans 12. Supporting charts are 6 + 6 or 8 + 4 |
 | Inspector | Right column, 4/12 (about 360 at 1440), shown only when a selection exists. Never floats over the chart |
@@ -73,7 +73,8 @@ worst adjacent CVD ΔE 11.4, normal-vision ΔE 23.1.
 | 3 | Pharmacy | `#159A8C` |
 | 4 | Manufacturer | `#8A63D2` |
 | 5 | Health Services | `#C9A227` (sub-3:1 contrast, so it always appears with a visible label) |
-| — | Unattributed / Other | `#B8C0C8` |
+| — | Funding sources (Uninsured · Trad. Medicare & public · Supplemental) | `#8A97A3`, `#A9B4BE`, `#C6CED5` (neutral steps, always labeled) |
+| — | Other (threshold roll-up) | `#D9DEE3` |
 
 Sankey links use the source node's hue at 35% opacity, or 60% on hover or selection.
 
@@ -126,6 +127,8 @@ Negative numbers use a true minus (−), not a hyphen. Unavailable values render
 |---|---|---|
 | `page_header` | Title (Display) and an optional subtitle (Small, `--ink-2`) | — |
 | `global_bar` | Inline compact selects and segmented control, 32 high | sticky |
+| `dataset_toggle` | Two-segment control. The active segment is `--accent-weak` with `--accent` text. The Enterprise label comes from `datasets.yaml` | Switching hides excluded pools with a one-line note ("Manufacturer, Health Services and PBM Services are market-only") |
+| `methodology_panel` | Expander inside the assumption builder: "How is provider revenue estimated?", rendered from `methodology.yaml` for the active dataset | collapsed by default |
 | `scenario_chip` | Dot, "Scenario A · 4 changes", caret. Opens the builder dialog | `baseline` (gray dot), `active` (teal dot and teal text), `draft` (amber dot "unapplied edits") |
 | `kpi_strip` | 4–6 metrics in one row, hairline dividers. Each has a Micro label, a KPI value and a Δ line (Small) | `delta-good` / `delta-bad` / `n/a` with reason |
 | `section_header` | H2, a one-line explanation, and right-aligned section controls | anchor id |

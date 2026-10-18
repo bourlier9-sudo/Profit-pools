@@ -1,21 +1,25 @@
 # Profit pool taxonomy — FICTIONAL. Drives the Marimekko, Sankey, filters,
-# assumption eligibility and aggregation. Depth is not fixed: any node may
-# have children, and only leaves carry data in the fact tables.
+# assumption eligibility and aggregation. Depth is not fixed by code: any node
+# may have children, and only leaves carry rows in the fact tables.
+#
+# Levels below the layer follow the source data shape (L1..L4):
+#   Payer, Manufacturer  L1–L2
+#   Health Services      L1–L3
+#   Provider, Pharmacy   up to L4 (ragged: some branches end earlier)
 #
 # Attributes inherit from parent to child unless overridden:
-#   economics    payer_pnl         revenue − claims − residual opex (payer)
-#                margin_on_revenue gain = revenue × observed operating margin
-#                top_down          revenue and margin are top-down estimates only
-#   coverage     bottom_up | allocated | top_down  (how revenue is built)
-#   geo_level    finest geography the data supports: county | state | national
+#   economics       payer_pnl          revenue − claims − residual opex
+#                   margin_on_revenue  gain = revenue × operating margin
+#                   top_down           revenue and margin are top-down estimates only
+#   coverage        bottom_up | allocated | top_down
+#   geo_level       finest geography the data supports: county | state | national
 #   receives_flows  true when value flows can terminate at this node
 #
-# Adding a breakdown (e.g. splitting Behavioral Health Services into
-# Utilization Management / Provider Enablement / Network Management / Other)
-# means adding children here and supplying leaf-level data; no chart or
-# engine code changes.
+# Adding a breakdown means adding children here and supplying leaf-level data.
+# No chart or engine code changes.
 
-schema_version: 1
+schema_version: 2
+max_levels_below_layer: 4
 
 layers:
   - id: PAYER
@@ -52,20 +56,45 @@ layers:
     coverage: allocated
     geo_level: state
     receives_flows: true
-    description: Care delivery. Revenue = attributed payer allowed spend + unattributed residual.
+    description: >-
+      Care delivery. Revenue = payer claims + uninsured and public-program spending
+      + supplemental payments, each estimated explicitly.
     children:
       - id: PRV_HOSP
         label: Hospitals
         children:
-          - {id: PRV_HOSP_ACUTE, label: General Acute Hospitals, short_label: Acute Hospitals}
-          - {id: PRV_HOSP_PSYCH, label: Psychiatric Hospitals, short_label: Psych Hospitals}
-          - {id: PRV_HOSP_REHAB, label: Rehabilitation Hospitals, short_label: Rehab Hospitals}
+          - id: PRV_HOSP_ACUTE
+            label: Acute Care Hospitals
+            short_label: Acute Care
+            children:
+              - id: PRV_IP
+                label: Acute Inpatient
+                short_label: Inpatient
+                children:
+                  - {id: PRV_IP_MEDSURG, label: Medical / Surgical Inpatient, short_label: Med/Surg IP}
+                  - {id: PRV_IP_MATERNITY, label: Maternity & Newborn, short_label: Maternity}
+              - id: PRV_OP
+                label: Hospital Outpatient
+                short_label: Outpatient
+                children:
+                  - {id: PRV_OP_ED, label: Emergency Department, short_label: ED}
+                  - {id: PRV_OP_SURG, label: Outpatient Surgery, short_label: OP Surgery}
+                  - {id: PRV_OP_OTHER, label: Other Outpatient Services, short_label: Other OP}
+          - id: PRV_HOSP_SPECIALTY
+            label: Specialty Hospitals
+            short_label: Specialty Hosp.
+            children:
+              - {id: PRV_HOSP_PSYCH, label: Psychiatric Hospitals, short_label: Psych Hospitals}
+              - {id: PRV_HOSP_REHAB, label: Rehabilitation Hospitals, short_label: Rehab Hospitals}
       - id: PRV_PHYS
         label: Physician & Clinical Services
         short_label: Physician
         children:
-          - {id: PRV_PHYS_PRIMARY, label: Primary Care, short_label: Primary Care}
-          - {id: PRV_PHYS_SPEC, label: Specialty Care, short_label: Specialty}
+          - id: PRV_PHYS_MED
+            label: Medical Practices
+            children:
+              - {id: PRV_PHYS_PRIMARY, label: Primary Care, short_label: Primary Care}
+              - {id: PRV_PHYS_SPEC, label: Specialty Care, short_label: Specialty}
           - {id: PRV_PHYS_BH, label: Behavioral Health Clinicians, short_label: BH Clinicians}
       - id: PRV_PAC
         label: Post-Acute Care
@@ -86,12 +115,44 @@ layers:
     coverage: allocated
     geo_level: state
     receives_flows: true
-    description: Dispensing pharmacies. Revenue = attributed pharmacy allowed spend + residual.
+    description: Dispensing pharmacies (flow recipients) and PBM services (top-down estimate).
     children:
-      # Leaves directly under the layer: hierarchy depth differs by layer on purpose.
-      - {id: RX_RETAIL, label: Retail Pharmacy, short_label: Retail Rx}
-      - {id: RX_SPECIALTY, label: Specialty Pharmacy, short_label: Specialty Rx}
-      - {id: RX_MAIL, label: Mail-Order Pharmacy, short_label: Mail Rx}
+      - id: RX_DISP
+        label: Dispensing Pharmacy
+        short_label: Dispensing
+        children:
+          - id: RX_RETAIL
+            label: Retail Pharmacy
+            short_label: Retail
+            children:
+              - id: RX_CHAIN
+                label: Chain Retail
+                children:
+                  - {id: RX_CHAIN_BRAND, label: Chain Retail — Brand, short_label: Chain Brand}
+                  - {id: RX_CHAIN_GENERIC, label: Chain Retail — Generic, short_label: Chain Generic}
+              - id: RX_INDEP
+                label: Independent Retail
+                children:
+                  - {id: RX_INDEP_BRAND, label: Independent Retail — Brand, short_label: Indep. Brand}
+                  - {id: RX_INDEP_GENERIC, label: Independent Retail — Generic, short_label: Indep. Generic}
+          - id: RX_SPECIALTY
+            label: Specialty Pharmacy
+            short_label: Specialty Rx
+            children:
+              - {id: RX_SPEC_HEALTHSYS, label: Health-System Specialty, short_label: Health-Sys Specialty}
+              - {id: RX_SPEC_INDEP, label: Independent Specialty, short_label: Indep. Specialty}
+          - {id: RX_MAIL, label: Mail-Order Pharmacy, short_label: Mail Rx}
+      - id: RX_PBM
+        label: Pharmacy Benefit Services
+        short_label: PBM Services
+        economics: top_down
+        coverage: top_down
+        geo_level: national
+        receives_flows: false
+        description: Top-down estimate. Appears in profit pools, never in value flows.
+        children:
+          - {id: RX_PBM_COMM, label: Commercial PBM Services, short_label: Comm. PBM}
+          - {id: RX_PBM_GOV, label: Government PBM Services, short_label: Gov. PBM}
 
   - id: MANUFACTURER
     label: Manufacturer
@@ -103,9 +164,17 @@ layers:
       Top-down market estimates only. Not attributed to payer lines of business,
       states or counties.
     children:
-      - {id: MFR_BRAND, label: Branded Pharmaceuticals, short_label: Branded Rx}
-      - {id: MFR_GENERIC, label: Generic Pharmaceuticals, short_label: Generics}
-      - {id: MFR_DEVICE, label: Medical Devices, short_label: Devices}
+      - id: MFR_PHARMA
+        label: Pharmaceuticals
+        children:
+          - {id: MFR_BRAND, label: Branded Pharmaceuticals, short_label: Branded}
+          - {id: MFR_GENERIC, label: Generics & Biosimilars, short_label: Generics}
+      - id: MFR_MEDTECH
+        label: Medical Technology
+        short_label: MedTech
+        children:
+          - {id: MFR_DEVICE, label: Medical Devices, short_label: Devices}
+          - {id: MFR_DIAG, label: Diagnostics, short_label: Diagnostics}
 
   - id: HEALTH_SERVICES
     label: Health Services
@@ -113,22 +182,39 @@ layers:
     coverage: top_down
     geo_level: national
     receives_flows: false
-    description: Services sold to payers and providers. Mostly top-down estimates.
+    description: Services sold to payers and providers. Top-down estimates only.
     children:
-      - id: HS_PAYER_SVC
-        label: Payer Services & Technology
-        short_label: Payer Services
-        economics: margin_on_revenue
-        coverage: allocated
-        geo_level: state
-        receives_flows: true
-        description: >-
-          Partially attributed: an estimated share of payer residual operating
-          expense is allocated here; the remainder is an unattributed residual.
+      - id: HS_PAYER
+        label: Payer Services
+        children:
+          - id: HS_CARE_MGMT
+            label: Care Management
+            children:
+              - {id: HS_UM, label: Utilization Management}
+              - {id: HS_CARE_COORD, label: Care Coordination}
+          - id: HS_TECH
+            label: Technology & Analytics
+            short_label: Tech & Analytics
+            children:
+              - {id: HS_CLAIMS_PLATFORM, label: Claims & Admin Platforms, short_label: Claims Platforms}
+              - {id: HS_ANALYTICS, label: Analytics}
+      - id: HS_PROVIDER
+        label: Provider Services
+        children:
+          - id: HS_ENABLEMENT
+            label: Provider Enablement
+            children:
+              - {id: HS_VBC, label: Value-Based Care Enablement, short_label: VBC Enablement}
+              - {id: HS_RCM, label: Revenue Cycle Services, short_label: Revenue Cycle}
       - id: HS_BH
         label: Behavioral Health Services
         short_label: BH Services
-        # Future breakdown example (configuration only):
-        # children: Utilization Management, Provider Enablement,
-        #           Network Management, Other Services
-      - {id: HS_PBS, label: Pharmacy Benefit Services, short_label: PBM Services}
+        children:
+          - id: HS_BH_PROGRAMS
+            label: Behavioral Health Programs
+            short_label: BH Programs
+            children:
+              - {id: HS_BH_UM, label: BH Utilization Management, short_label: BH UM}
+              - {id: HS_BH_ENABLE, label: BH Provider Enablement, short_label: BH Enablement}
+              - {id: HS_BH_NETWORK, label: BH Network Management, short_label: BH Network}
+              - {id: HS_BH_OTHER, label: Other BH Services, short_label: Other BH}

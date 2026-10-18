@@ -19,7 +19,13 @@ from typing import Iterable, Protocol
 
 import pandas as pd
 
-from profit_pools.core.data.contracts import Issue, validate_bundle
+from profit_pools.core.data.contracts import (
+    COVERAGE_POPULATION_COLUMNS,
+    POOL_METRICS_COLUMNS,
+    VALUE_FLOWS_COLUMNS,
+    Issue,
+    validate_bundle,
+)
 from profit_pools.core.data.synthetic import DEFAULT_SEED, SyntheticBundle, generate
 from profit_pools.core.taxonomy import Metadata, default_metadata
 
@@ -40,6 +46,9 @@ class DataAdapter(Protocol):
 
     def value_flows(self, years: Iterable[int] | None = None,
                     states: Iterable[str] | None = None) -> pd.DataFrame: ...
+
+    def coverage_population(self, years: Iterable[int] | None = None,
+                            states: Iterable[str] | None = None) -> pd.DataFrame: ...
 
     def validate(self) -> list[Issue]: ...
 
@@ -80,8 +89,12 @@ class SyntheticAdapter:
     def value_flows(self, years=None, states=None) -> pd.DataFrame:
         return _filter(self.bundle.value_flows, years, states)
 
+    def coverage_population(self, years=None, states=None) -> pd.DataFrame:
+        return _filter(self.bundle.coverage_population, years, states)
+
     def validate(self) -> list[Issue]:
-        return validate_bundle(self.bundle.pool_metrics, self.bundle.value_flows, self.metadata)
+        b = self.bundle
+        return validate_bundle(b.pool_metrics, b.value_flows, b.coverage_population, self.metadata)
 
 
 class SnowflakeAdapterNotConfigured(RuntimeError):
@@ -98,14 +111,16 @@ class SnowflakeAdapter:
     """
 
     POOL_METRICS_SQL = (
-        "SELECT YEAR, GEO_LEVEL, STATE, COUNTY, LAYER_ID, POOL_ID, SUBPOOL_ID, LOB, ENROLLMENT, "
-        "REVENUE, CLAIMS_EXPENSE, OPERATING_GAIN, OPERATING_MARGIN, REVENUE_PMPM, SPEND_PMPM, "
-        "SOURCE_TYPE, COVERAGE_LEVEL FROM FACT_POOL_METRICS WHERE YEAR BETWEEN :y0 AND :y1"
+        f"SELECT {', '.join(c.name for c in POOL_METRICS_COLUMNS)} "
+        "FROM FACT_POOL_METRICS WHERE YEAR BETWEEN :y0 AND :y1"
     )
     VALUE_FLOWS_SQL = (
-        "SELECT YEAR, GEO_LEVEL, STATE, COUNTY, SOURCE_NODE_ID, TARGET_NODE_ID, PAYER_LOB, "
-        "SPENDING_CATEGORY, FLOW_KIND, ANNUAL_FLOW_AMOUNT, SERVICE_COUNT, SERVICE_UNIT, "
-        "ALLOCATION_METHOD, SOURCE_TYPE FROM FACT_VALUE_FLOWS WHERE YEAR BETWEEN :y0 AND :y1"
+        f"SELECT {', '.join(c.name for c in VALUE_FLOWS_COLUMNS)} "
+        "FROM FACT_VALUE_FLOWS WHERE YEAR BETWEEN :y0 AND :y1"
+    )
+    COVERAGE_POPULATION_SQL = (
+        f"SELECT {', '.join(c.name for c in COVERAGE_POPULATION_COLUMNS)} "
+        "FROM FACT_COVERAGE_POPULATION WHERE YEAR BETWEEN :y0 AND :y1"
     )
 
     def __init__(self, metadata: Metadata | None = None):
@@ -125,6 +140,9 @@ class SnowflakeAdapter:
         self._unavailable()
 
     def value_flows(self, years=None, states=None) -> pd.DataFrame:
+        self._unavailable()
+
+    def coverage_population(self, years=None, states=None) -> pd.DataFrame:
         self._unavailable()
 
     def validate(self) -> list[Issue]:

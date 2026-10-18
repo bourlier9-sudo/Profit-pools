@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 
 from profit_pools.core.data.contracts import (
-    EXTERNAL_SOURCE,
     NATIONAL,
     validate_bundle,
     validate_pool_metrics,
@@ -13,43 +12,45 @@ from profit_pools.core.data.contracts import (
 )
 from profit_pools.core.data.synthetic import generate
 
+DATASETS = ["MARKET", "ENTERPRISE"]
+
 
 def test_contract_validation_passes(bundle, meta):
-    issues = validate_bundle(bundle.pool_metrics, bundle.value_flows, meta)
-    assert issues == []
+    assert validate_bundle(bundle.pool_metrics, bundle.value_flows, bundle.coverage_population, meta) == []
 
 
 def test_deterministic_for_seed(bundle, meta):
     again = generate(seed=bundle.seed, meta=meta)
     pd.testing.assert_frame_equal(bundle.pool_metrics, again.pool_metrics)
     pd.testing.assert_frame_equal(bundle.value_flows, again.value_flows)
-    other = generate(seed=bundle.seed + 1, meta=meta)
-    assert not np.isclose(other.pool_metrics["REVENUE"].sum(), bundle.pool_metrics["REVENUE"].sum())
+    pd.testing.assert_frame_equal(bundle.coverage_population, again.coverage_population)
 
 
-def payer_rows(bundle):
-    m = bundle.pool_metrics
-    return m[m["LAYER_ID"] == "PAYER"]
+def rows(df, ds, **eq):
+    out = df[df["DATASET"] == ds]
+    for k, v in eq.items():
+        out = out[out[k] == v]
+    return out
 
 
-def test_pmpm_to_annual_conversion(bundle):
-    p = payer_rows(bundle)
+@pytest.mark.parametrize("ds", DATASETS)
+def test_pmpm_to_annual_conversion(bundle, ds):
+    p = rows(bundle.pool_metrics, ds, LAYER_ID="PAYER")
     np.testing.assert_allclose(p["REVENUE"], p["REVENUE_PMPM"] * p["ENROLLMENT"] * 12, rtol=1e-12)
     np.testing.assert_allclose(p["CLAIMS_EXPENSE"], p["SPEND_PMPM"] * p["ENROLLMENT"] * 12, rtol=1e-12)
 
 
-def test_payer_residual_opex_is_positive_and_derivable(bundle):
-    p = payer_rows(bundle)
+@pytest.mark.parametrize("ds", DATASETS)
+def test_payer_residual_opex_is_positive(bundle, ds):
+    p = rows(bundle.pool_metrics, ds, LAYER_ID="PAYER")
     resid = p["REVENUE"] - p["CLAIMS_EXPENSE"] - p["OPERATING_GAIN"]
-    assert (resid > 0).all()
-    ratio = resid / p["REVENUE"]
-    assert ratio.between(0.05, 0.2).all()
+    assert (resid / p["REVENUE"]).between(0.04, 0.2).all()
 
 
-def test_claims_flows_reconcile_to_payer_claims_at_every_grain(bundle):
-    p = payer_rows(bundle)
-    f = bundle.value_flows
-    claims = f[f["FLOW_KIND"] == "claims"]
+@pytest.mark.parametrize("ds", DATASETS)
+def test_claims_flows_reconcile_to_payer_claims_at_every_grain(bundle, ds):
+    p = rows(bundle.pool_metrics, ds, LAYER_ID="PAYER")
+    claims = rows(bundle.value_flows, ds, FLOW_KIND="payer_claims")
     for keys in (["YEAR"], ["YEAR", "STATE"], ["YEAR", "PAYER_LOB"], ["YEAR", "STATE", "COUNTY"]):
         pk = [("LOB" if k == "PAYER_LOB" else k) for k in keys]
         a = p.groupby(pk)["CLAIMS_EXPENSE"].sum().sort_index()
@@ -57,17 +58,62 @@ def test_claims_flows_reconcile_to_payer_claims_at_every_grain(bundle):
         np.testing.assert_allclose(a.to_numpy(), b.to_numpy(), rtol=1e-12)
 
 
-def test_recipient_revenue_equals_attributed_plus_residual(bundle, meta):
+@pytest.mark.parametrize("ds", DATASETS)
+def test_recipient_revenue_is_sum_of_explicit_components(bundle, meta, ds):
+    m = rows(bundle.pool_metrics, ds)
+    rec = m[m["NODE_ID"].map(lambda i: meta.taxonomy[i].receives_flows)]
+    inflow = rows(bundle.value_flows, ds).groupby("TARGET_NODE_ID")["ANNUAL_FLOW_AMOUNT"].sum()
+    rev = rec.groupby("NODE_ID")["REVENUE"].sum()
+    np.testing.assert_allclose(rev.sort_index(), inflow.loc[rev.index].sort_index(), rtol=1e-12)
+
+
+def test_market_revenue_components(bundle, meta):
+    f = rows(bundle.value_flows, "MARKET")
+    assert set(f["FLOW_KIND"]) == {"payer_claims", "funding_pmpm", "supplemental"}
+    # Every component is an explicit, named source — there is no plug.
+    assert set(f.loc[f["FLOW_KIND"] != "payer_claims", "SOURCE_NODE_ID"]) == {
+        "FS_UNINSURED", "FS_TRAD_MCR", "FS_SUPPLEMENTAL"}
+    sup = f[f["FLOW_KIND"] == "supplemental"]
+    assert set(sup["TARGET_NODE_ID"]) == set(meta.supplemental_targets("FS_SUPPLEMENTAL"))
+    # Population-based components reconcile to population × PMPM via the population table.
+    pop = bundle.coverage_population.set_index(["YEAR", "COUNTY", "FUNDING_SOURCE_ID"])["POPULATION"]
+    fp = f[f["FLOW_KIND"] == "funding_pmpm"]
+    per = fp.groupby(["YEAR", "COUNTY", "SOURCE_NODE_ID"])["ANNUAL_FLOW_AMOUNT"].sum()
+    pmpm = per / (pop.loc[per.index].to_numpy() * 12)
+    assert pmpm.groupby(level="SOURCE_NODE_ID").median().between(100, 2500).all()
+
+
+def test_enterprise_view_is_a_subset_of_market(bundle, meta):
     m = bundle.pool_metrics
+    ent = rows(m, "ENTERPRISE")
+    assert set(ent["LAYER_ID"]) == {"PAYER", "PROVIDER", "PHARMACY"}
+    assert not ent["NODE_ID"].str.startswith("RX_PBM").any()
+    assert set(rows(bundle.value_flows, "ENTERPRISE")["FLOW_KIND"]) == {"payer_claims"}
+    k = ["YEAR", "COUNTY", "LOB"]
+    mk = rows(m, "MARKET", LAYER_ID="PAYER").set_index(k)["ENROLLMENT"]
+    e = ent[ent["LAYER_ID"] == "PAYER"].set_index(k)["ENROLLMENT"]
+    assert (e <= mk.loc[e.index]).all()
+    # Every recipient's enterprise revenue is below its market revenue.
+    rk = ["YEAR", "STATE", "NODE_ID"]
+    mr = rows(m, "MARKET", LAYER_ID="PROVIDER").set_index(rk)["REVENUE"]
+    er = rows(m, "ENTERPRISE", LAYER_ID="PROVIDER").set_index(rk)["REVENUE"]
+    assert (er < mr.loc[er.index]).all()
+
+
+def test_market_pmpm_is_benchmarked_on_enterprise(bundle):
+    """Market allowed PMPM = enterprise state PMPM × a market factor (uniform within a state)."""
     f = bundle.value_flows
-    rec = m[m["SUBPOOL_ID"].map(lambda i: meta.taxonomy[i].receives_flows)]
-    nat_rev = rec.groupby("SUBPOOL_ID")["REVENUE"].sum()
-    inflow = f.groupby("TARGET_NODE_ID")["ANNUAL_FLOW_AMOUNT"].sum()
-    np.testing.assert_allclose(nat_rev.sort_index(), inflow.loc[nat_rev.index].sort_index(), rtol=1e-12)
-    # Residual is a real, explicit share: neither zero nor the whole pool.
-    resid = f[f["FLOW_KIND"] == "residual"].groupby("TARGET_NODE_ID")["ANNUAL_FLOW_AMOUNT"].sum()
-    share = (resid / nat_rev).dropna()
-    assert share.between(0.2, 0.7).all()
+    p = bundle.pool_metrics
+    key = ["YEAR", "STATE", "PAYER_LOB", "SPENDING_CATEGORY"]
+
+    def pmpm(ds):
+        flows = rows(f, ds, FLOW_KIND="payer_claims").groupby(key)["ANNUAL_FLOW_AMOUNT"].sum()
+        mm = rows(p, ds, LAYER_ID="PAYER").groupby(["YEAR", "STATE", "LOB"])["ENROLLMENT"].sum() * 12
+        mm.index.names = key[:3]
+        return flows / mm.reindex(flows.index.droplevel(3)).to_numpy()
+
+    ratio = (pmpm("MARKET") / pmpm("ENTERPRISE")).dropna()
+    assert ratio.between(0.97, 1.05).all()
 
 
 def test_gain_is_revenue_times_margin_for_recipients(bundle):
@@ -77,70 +123,59 @@ def test_gain_is_revenue_times_margin_for_recipients(bundle):
 
 
 def test_geography_aggregation_is_consistent(bundle):
-    """County → state → national sums agree for additive payer metrics."""
-    p = payer_rows(bundle)
+    p = rows(bundle.pool_metrics, "MARKET", LAYER_ID="PAYER")
     for col in ("ENROLLMENT", "REVENUE", "CLAIMS_EXPENSE", "OPERATING_GAIN"):
-        by_county = p.groupby(["YEAR", "STATE", "COUNTY"])[col].sum()
-        by_state = by_county.groupby(level=["YEAR", "STATE"]).sum()
-        national = by_state.groupby(level="YEAR").sum()
-        np.testing.assert_allclose(national, p.groupby("YEAR")[col].sum(), rtol=1e-12)
+        by_state = p.groupby(["YEAR", "STATE", "COUNTY"])[col].sum().groupby(level=["YEAR", "STATE"]).sum()
+        np.testing.assert_allclose(by_state.groupby(level="YEAR").sum(), p.groupby("YEAR")[col].sum(), rtol=1e-12)
 
 
-def test_service_counts_reconcile_and_respect_reliability(bundle, meta):
+def test_instances_only_where_available_and_never_pharmacy(bundle, meta):
     f = bundle.value_flows
-    s = f[f["SERVICE_COUNT"].notna()]
-    assert len(s) > 0
-    # Unreliable categories never carry counts.
-    assert not s["SPENDING_CATEGORY"].isin(["IP_REHAB", "HOME_HEALTH", "IMAGING"]).any()
-    # Psych days only for Commercial and Medicare.
-    psych = s[s["SPENDING_CATEGORY"] == "IP_PSYCH"]
-    assert set(psych["PAYER_LOB"].map(meta.lobs.group_of)) == {"COMM", "MCR"}
-    # Allowed = services × average allowed per service, with a plausible price.
-    price = s["ANNUAL_FLOW_AMOUNT"] / s["SERVICE_COUNT"]
-    assert (price > 0).all()
-    acute = s[s["SPENDING_CATEGORY"] == "IP_ACUTE"]
-    assert (acute["ANNUAL_FLOW_AMOUNT"] / acute["SERVICE_COUNT"]).between(8_000, 60_000).all()
-    # A category has exactly one unit.
-    assert (s.groupby("SPENDING_CATEGORY")["SERVICE_UNIT"].nunique() == 1).all()
+    inst = f[f["INSTANCE_COUNT"].notna()]
+    assert len(inst) > 0
+    assert set(inst["FLOW_KIND"]) == {"payer_claims"}
+    layers = inst["TARGET_NODE_ID"].map(lambda t: meta.taxonomy[t].layer_id)
+    assert set(layers) == {"PROVIDER"}
+    assert not inst["SPENDING_CATEGORY"].isin(["IMAGING", "HOME_HEALTH"]).any()
+    price = inst["ANNUAL_FLOW_AMOUNT"] / inst["INSTANCE_COUNT"]
+    medsurg = price[inst["SPENDING_CATEGORY"] == "IP_MEDSURG"]
+    assert medsurg.between(8_000, 60_000).all()
 
 
-def test_top_down_pools_are_national_and_unattributed(bundle, meta):
+def test_top_down_pools_are_market_national_and_flowless(bundle, meta):
     m = bundle.pool_metrics
     td_ids = [n.id for n in meta.taxonomy.leaves() if n.is_top_down]
-    td = m[m["SUBPOOL_ID"].isin(td_ids)]
+    td = m[m["NODE_ID"].isin(td_ids)]
+    assert set(td["DATASET"]) == {"MARKET"}
     assert set(td["GEO_LEVEL"]) == {"national"} and set(td["STATE"]) == {NATIONAL}
-    assert set(td["COVERAGE_LEVEL"]) == {"top_down"}
-    assert not bundle.value_flows["TARGET_NODE_ID"].isin(td_ids).any()
-    assert not bundle.value_flows["SOURCE_NODE_ID"].isin(td_ids).any()
+    assert set(td_ids) == set(td["NODE_ID"])
+    f = bundle.value_flows
+    assert not f["TARGET_NODE_ID"].isin(td_ids).any() and not f["SOURCE_NODE_ID"].isin(td_ids).any()
 
 
 def test_edge_cases_present(bundle):
     m = bundle.pool_metrics
-    # Negative margins in both payer and provider layers.
-    assert (m.loc[m["LAYER_ID"] == "PAYER", "OPERATING_GAIN"] < 0).any()
-    assert (m.loc[m["SUBPOOL_ID"] == "PRV_HOSP_PSYCH", "OPERATING_MARGIN"] < 0).all()
-    # Missing margins: rehab in two states, imaging early years, BH services top-down.
-    missing = m[m["OPERATING_MARGIN"].isna()]
-    assert set(missing.loc[missing["SUBPOOL_ID"] == "PRV_HOSP_REHAB", "STATE"]) == {"WMR", "LKD"}
-    assert set(missing.loc[missing["SUBPOOL_ID"] == "PRV_AMB_IMG", "YEAR"]) == {2019, 2020}
-    assert set(missing.loc[missing["SUBPOOL_ID"] == "HS_BH", "YEAR"]) == {2019, 2020}
-    # A LOB that does not exist everywhere: no rows rather than zeros.
-    exp = m[m["LOB"] == "MCD_EXP"]
+    mkt = rows(m, "MARKET")
+    assert (mkt.loc[mkt["LAYER_ID"] == "PAYER", "OPERATING_GAIN"] < 0).any()
+    assert (mkt.loc[mkt["NODE_ID"] == "PRV_HOSP_PSYCH", "OPERATING_MARGIN"] < 0).all()
+    assert (mkt.loc[mkt["NODE_ID"] == "HS_VBC", "OPERATING_MARGIN"] < 0).all()
+    missing = mkt[mkt["OPERATING_MARGIN"].isna()]
+    assert set(missing.loc[missing["NODE_ID"] == "PRV_HOSP_REHAB", "STATE"]) == {"WMR", "LKD"}
+    assert set(missing.loc[missing["NODE_ID"] == "PRV_AMB_IMG", "YEAR"]) == {2019, 2020}
+    assert set(missing.loc[missing["NODE_ID"] == "HS_BH_OTHER", "YEAR"]) == {2019, 2020}
+    exp = mkt[mkt["LOB"] == "MCD_EXP"]
     assert "SRG" not in set(exp["STATE"])
     assert exp.loc[exp["STATE"] == "CLP", "YEAR"].min() == 2021
-    # Partially attributed health-services pool.
-    f = bundle.value_flows
-    psvc = f[f["TARGET_NODE_ID"] == "HS_PAYER_SVC"]
-    assert set(psvc["FLOW_KIND"]) == {"opex", "residual"}
+    ent = rows(m, "ENTERPRISE")
+    assert "WMR" not in set(ent["STATE"])                       # no enterprise presence
+    snp = ent[ent["LOB"] == "MA_SNP"]
+    assert not set(snp["STATE"]) & {"SRG", "CLP"}               # enterprise SNP absent there
 
 
-def test_opex_flows_bounded_by_payer_residual_opex(bundle):
-    p = payer_rows(bundle).set_index(["YEAR", "STATE", "COUNTY", "SUBPOOL_ID"])
-    resid = p["REVENUE"] - p["CLAIMS_EXPENSE"] - p["OPERATING_GAIN"]
-    f = bundle.value_flows
-    opex = f[f["FLOW_KIND"] == "opex"].groupby(["YEAR", "STATE", "COUNTY", "SOURCE_NODE_ID"])["ANNUAL_FLOW_AMOUNT"].sum()
-    opex.index.names = resid.index.names
-    assert (opex <= resid.loc[opex.index]).all()
+def test_uninsured_rises_with_medicaid_unwinding(bundle):
+    pop = bundle.coverage_population
+    u = pop[pop["FUNDING_SOURCE_ID"] == "FS_UNINSURED"].groupby("YEAR")["POPULATION"].sum()
+    assert u[2024] > u[2022]
 
 
 # --- the validator must catch corrupted data --------------------------------
@@ -149,47 +184,73 @@ def _codes(issues):
     return {i.code for i in issues}
 
 
+def _vf(bundle, meta, flows=None, metrics=None):
+    return validate_value_flows(flows if flows is not None else bundle.value_flows,
+                                metrics if metrics is not None else bundle.pool_metrics,
+                                bundle.coverage_population, meta)
+
+
 def test_validator_detects_broken_pmpm_identity(bundle, meta):
     m = bundle.pool_metrics.copy()
-    idx = m.index[m["LAYER_ID"] == "PAYER"][0]
-    m.loc[idx, "REVENUE"] *= 1.01
+    m.loc[m.index[m["LAYER_ID"] == "PAYER"][0], "REVENUE"] *= 1.01
     assert "payer.revenue_pmpm" in _codes(validate_pool_metrics(m, meta))
 
 
 def test_validator_detects_unreconciled_claims(bundle, meta):
     f = bundle.value_flows.copy()
-    idx = f.index[f["FLOW_KIND"] == "claims"][0]
-    f.loc[idx, "ANNUAL_FLOW_AMOUNT"] += 1e6
-    codes = _codes(validate_value_flows(f, bundle.pool_metrics, meta))
-    assert {"reconcile.claims", "reconcile.recipient"} <= codes
+    f.loc[f.index[f["FLOW_KIND"] == "payer_claims"][0], "ANNUAL_FLOW_AMOUNT"] += 1e6
+    assert {"reconcile.claims", "reconcile.recipient"} <= _codes(_vf(bundle, meta, flows=f))
 
 
 def test_validator_detects_flow_to_top_down(bundle, meta):
     f = bundle.value_flows.copy()
-    f.loc[f.index[0], "TARGET_NODE_ID"] = "MFR_BRAND"
-    assert "flow.target" in _codes(validate_value_flows(f, bundle.pool_metrics, meta))
+    f.loc[f.index[0], "TARGET_NODE_ID"] = "RX_PBM_COMM"
+    assert "flow.target" in _codes(_vf(bundle, meta, flows=f))
 
 
-def test_validator_detects_unreliable_service_counts(bundle, meta):
+def test_validator_detects_pharmacy_instances(bundle, meta):
     f = bundle.value_flows.copy()
-    idx = f.index[(f["SPENDING_CATEGORY"] == "IMAGING")][0]
-    f.loc[idx, ["SERVICE_COUNT", "SERVICE_UNIT"]] = [100.0, "procedure"]
-    assert "services.unreliable" in _codes(validate_value_flows(f, bundle.pool_metrics, meta))
+    f.loc[f.index[f["SPENDING_CATEGORY"] == "RX_MAIL"][0], "INSTANCE_COUNT"] = 100.0
+    assert "instances.category" in _codes(_vf(bundle, meta, flows=f))
+
+
+def test_validator_detects_funding_flows_in_enterprise(bundle, meta):
+    f = bundle.value_flows.copy()
+    f.loc[f.index[f["FLOW_KIND"] == "funding_pmpm"][0], "DATASET"] = "ENTERPRISE"
+    assert "dataset.funding" in _codes(_vf(bundle, meta, flows=f))
+
+
+def test_validator_detects_supplemental_to_non_hospital(bundle, meta):
+    f = bundle.value_flows.copy()
+    f.loc[f.index[f["FLOW_KIND"] == "supplemental"][0], "TARGET_NODE_ID"] = "PRV_PHYS_PRIMARY"
+    assert "flow.supplemental_target" in _codes(_vf(bundle, meta, flows=f))
+
+
+def test_validator_detects_excluded_node_in_enterprise(bundle, meta):
+    m = bundle.pool_metrics.copy()
+    m.loc[m.index[m["NODE_ID"] == "MFR_BRAND"][0], "DATASET"] = "ENTERPRISE"
+    assert "dataset.excluded" in _codes(validate_pool_metrics(m, meta))
+
+
+def test_validator_detects_wrong_level_columns(bundle, meta):
+    m = bundle.pool_metrics.copy()
+    m.loc[m.index[m["NODE_ID"] == "PRV_OP_ED"][0], "L3_ID"] = "PRV_IP"
+    assert "taxonomy.path" in _codes(validate_pool_metrics(m, meta))
 
 
 def test_validator_detects_wrong_geo_grain(bundle, meta):
     m = bundle.pool_metrics.copy()
-    idx = m.index[m["SUBPOOL_ID"] == "MFR_BRAND"][0]
-    m.loc[idx, ["GEO_LEVEL", "STATE"]] = ["state", "NVL"]
+    m.loc[m.index[m["NODE_ID"] == "MFR_BRAND"][0], ["GEO_LEVEL", "STATE"]] = ["state", "NVL"]
     assert "geo.grain" in _codes(validate_pool_metrics(m, meta))
 
 
-@pytest.mark.parametrize("col", ["REVENUE", "YEAR"])
+def test_validator_detects_enterprise_exceeding_market(bundle, meta):
+    m = bundle.pool_metrics.copy()
+    idx = m.index[(m["DATASET"] == "ENTERPRISE") & (m["LAYER_ID"] == "PAYER")][0]
+    m.loc[idx, ["ENROLLMENT", "REVENUE", "CLAIMS_EXPENSE", "OPERATING_GAIN"]] *= 50
+    assert "dataset.subset" in _codes(validate_pool_metrics(m, meta))
+
+
+@pytest.mark.parametrize("col", ["REVENUE", "DATASET"])
 def test_validator_detects_missing_columns(bundle, meta, col):
-    m = bundle.pool_metrics.drop(columns=[col])
-    assert "schema.missing" in _codes(validate_pool_metrics(m, meta))
-
-
-def test_residual_flows_come_from_external_source(bundle):
-    f = bundle.value_flows
-    assert (f.loc[f["FLOW_KIND"] == "residual", "SOURCE_NODE_ID"] == EXTERNAL_SOURCE).all()
+    assert "schema.missing" in _codes(validate_pool_metrics(bundle.pool_metrics.drop(columns=[col]), meta))

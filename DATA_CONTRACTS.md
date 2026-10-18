@@ -1,7 +1,7 @@
 # Data Contracts
 
-> **Everything here is fictional.** The schemas, states, counties, pools and numbers are invented for a
-> standalone prototype. They are not representations of any real corporate table or market.
+> **Everything here is fictional.** The schemas, states, counties, pools, companies and numbers are invented
+> for a standalone prototype. They are not representations of any real corporate table, company or market.
 
 Executable source of truth: `profit_pools/core/data/contracts.py` (column specs + validators).
 `tests/test_docs_contracts.py` fails if a contract column is missing from this document.
@@ -12,112 +12,132 @@ Executable source of truth: `profit_pools/core/data/contracts.py` (column specs 
 
 | Topic | Rule |
 |---|---|
+| Datasets | `DATASET ∈ {MARKET, ENTERPRISE}` (`datasets.yaml`). MARKET is the total market. ENTERPRISE is the company's own book. The label is configurable, and this fictional build ships "Enterprise (fictional)". |
 | Currency | Nominal USD. No inflation adjustment. |
-| Annual values | `REVENUE`, `CLAIMS_EXPENSE`, `OPERATING_GAIN`, `ANNUAL_FLOW_AMOUNT` are **USD per calendar year**. Stored in dollars, displayed as $B / $M. |
-| Enrollment | **Average members** in the year = member-months ÷ 12. |
-| PMPM | **Monthly** dollars per average member: `annual = PMPM × ENROLLMENT × 12`. PMPMs are never summed; they are recomputed from additive components after aggregation. |
-| Ratios | `OPERATING_MARGIN = OPERATING_GAIN / REVENUE`, stored as a fraction (0.042 = 4.2%). Never averaged; recomputed from sums. |
-| Service counts | Annual counts in a **category-specific unit** (admissions, visits, inpatient days, …). Never summed across categories or units. |
-| Years | History 2019–2025 (synthetic "observed"). Base year 2025. Forecast 2026–2031 is **produced by the model**, never stored as facts. |
-| Geography | `GEO_LEVEL ∈ {national, state, county}`. National rows use `STATE = 'US'`, `COUNTY = null`. State rows have `COUNTY = null`. Each row is stored only at its **finest available grain**. There are no pre-aggregated rows, so summing never double counts. |
-| Nulls | Null means **unavailable**, never zero. A LOB that does not exist in a state (e.g. Expansion Adults in a non-expansion state) has **no rows**. |
+| Annual values | `REVENUE`, `CLAIMS_EXPENSE`, `OPERATING_GAIN`, `ANNUAL_FLOW_AMOUNT` are **USD per calendar year**, stored in dollars. |
+| Enrollment / population | **Average persons** in the year = member-months ÷ 12. |
+| PMPM | **Monthly** dollars per average member: `annual = PMPM × members × 12`. Never summed; recomputed after aggregation. |
+| Ratios | Margins are fractions (0.042 = 4.2%), recomputed from sums and never averaged. |
+| Service volume | One unit only: **service instances** per year (`spending_categories.yaml → instance_unit`). Present only for categories flagged `instances: true`. **Never for pharmacy.** |
+| Years | History 2019–2025. Base year 2025. Forecast 2026–2031 is **produced by the model**, never stored as facts. |
+| Geography | `GEO_LEVEL ∈ {national, state, county}`. National rows use `STATE = 'US'` and `COUNTY = null`. Each row is stored at its **finest grain only**, with no pre-aggregated rows. |
+| Hierarchy | `LAYER_ID`, then `L1_ID`…`L4_ID`, mirroring the source data shape. `NODE_ID` = the leaf (deepest non-null level). Payer and Manufacturer use L1–L2, Health Services L1–L3, Provider and Pharmacy up to L4 (ragged). |
+| Nulls | Null means **unavailable**, never zero. A cell that does not exist (e.g. Expansion Adults in a non-expansion state, or no enterprise presence in a state) has **no rows**. |
 
 ---
 
 ## 2. Economic definitions (agreed model)
 
-### 2.1 Payers (`economics: payer_pnl`)
+### 2.1 Datasets and how the market is built
+
+| | MARKET (total market) | ENTERPRISE (company book) |
+|---|---|---|
+| Payer enrollment | Market estimate by county × LOB | Observed |
+| Payer allowed PMPM | **PMPM benchmark**: enterprise state-level PMPM × market factor | Observed claims |
+| Payer revenue, gain | Market enrollment × benchmark premium PMPM; gain = revenue × estimated market margin | Observed |
+| Service instances | Enterprise instances per member × market members | Observed |
+| Recipient revenue | Payer claims + uninsured + traditional Medicare & public + supplemental payments | Enterprise payer claims only |
+| Recipient margin | Pool operating margin | **Same pool margin** as the market (a property of the pool) |
+| Top-down pools | Manufacturer, Health Services, PBM Services | **Excluded** |
+
+Enterprise recipient gain is therefore *the part of the pool's profit associated with enterprise
+members*. It is not the enterprise's own profit.
+
+### 2.2 Payers (`economics: payer_pnl`)
 
 ```
-REVENUE            = REVENUE_PMPM × ENROLLMENT × 12                    observed
-CLAIMS_EXPENSE     = Σ allowed spend over claims categories             observed
-                   = SPEND_PMPM × ENROLLMENT × 12
-OPERATING_GAIN                                                          observed
+REVENUE            = REVENUE_PMPM × ENROLLMENT × 12
+CLAIMS_EXPENSE     = Σ allowed spend over claims categories = SPEND_PMPM × ENROLLMENT × 12
+OPERATING_GAIN     (observed for enterprise; estimated for market)
 residual_opex      = REVENUE − CLAIMS_EXPENSE − OPERATING_GAIN          DERIVED (not stored)
-residual_opex_pmpm = residual_opex / (ENROLLMENT × 12)                  DERIVED
 ```
 
-* No administrative expense is reported. **Residual operating expense is a derived residual**, not a
-  modeled cost structure.
-* In scenarios, residual opex **PMPM is held at its baseline value** unless an assumption changes it.
-  Total residual opex therefore scales with enrollment.
-* A change in allowed-spend PMPM changes claims expense and therefore payer gain. Premium is unchanged
-  unless a separate assumption changes it.
+* No administrative expense is reported. **Residual opex is a derived residual.**
+* In scenarios, residual opex **PMPM is held constant**, so it scales with enrollment. A user may enter an
+  `opex_volume_scaling` assumption (the share of opex that varies with enrollment). The data offers no
+  estimate of this.
+* Changes in allowed PMPM change claims and therefore payer gain. Premium is unchanged unless assumed.
 
-**Allowed-vs-paid caveat.** The prototype treats allowed spend as both the payer's modeled claims outflow
-and the provider's receipt. Real allowed amounts include member cost sharing, so they exceed payer-paid
-claims. Under this simplification, derived residual opex absorbs the cost-sharing gap. The UI states
-this wherever claims or residual opex are shown.
+**Allowed-vs-paid caveat.** Allowed spend is used as both the payer's modeled claims outflow and the
+provider's receipt. Allowed amounts include member cost sharing, so derived residual opex absorbs the
+cost-sharing gap. The UI states this wherever claims or residual opex are shown.
 
-### 2.2 Flow recipients: providers, pharmacy, Payer Services (`economics: margin_on_revenue`)
+### 2.3 Flow recipients: provider and dispensing pharmacy (`economics: margin_on_revenue`)
 
-```
-attributed_revenue   = Σ inflows from modeled payer LOBs                ALLOCATED (from observed claims)
-unattributed_revenue = residual inflow from EXT_UNATTRIBUTED            ESTIMATED
-REVENUE              = attributed_revenue + unattributed_revenue
-OPERATING_MARGIN                                                        observed (may be null)
-OPERATING_GAIN       = REVENUE × OPERATING_MARGIN                       DERIVED
-residual_opex        = REVENUE − OPERATING_GAIN                         DERIVED (not stored)
-```
-
-* **Constant margin.** There is no variable/fixed cost model and no operating leverage. When a recipient's
-  revenue changes for any reason (enrollment, utilization, price, routing), gain changes at the
-  unchanged margin. Only an explicit `provider_margin` assumption changes the margin.
-* Payer and recipient margin assumptions are separate drivers and never cross-apply.
-
-### 2.3 Top-down pools (`economics: top_down`)
-
-Manufacturer, Behavioral Health Services and Pharmacy Benefit Services carry national revenue and margin
-**estimates only**. They have no LOB attribution, no state or county detail, and no flows. The UI never
-shows LOB, geography or service detail for them. It says "top-down estimate".
-
-### 2.4 Service volume decomposition (optional, per cell)
-
-Where `SERVICE_COUNT` is present:
+Revenue is the sum of **explicit, separately estimated components**. There is **no balancing plug**.
 
 ```
-ANNUAL_FLOW_AMOUNT (allowed) = SERVICE_COUNT × avg_allowed_per_service
-utilization_per_1000         = SERVICE_COUNT / ENROLLMENT × 1000
+REVENUE = Σ payer_claims inflows        payer segment members × allowed PMPM_c
+        + Σ funding_pmpm inflows        uninsured / traditional Medicare & public population × PMPM_c
+        + Σ supplemental inflows        state/supplemental payments (hospital leaves only)
+OPERATING_GAIN = REVENUE × OPERATING_MARGIN           (margin constant unless assumed)
+residual_opex  = REVENUE − OPERATING_GAIN              DERIVED
 ```
 
-Counts exist only where `spending_categories.yaml → reliable_lob_groups` lists the payer's LOB group.
-Only those cells offer *utilization* and *unit price* assumptions. Everywhere else only *allowed PMPM*
-assumptions apply. Under both decompositions the recipient margin stays constant.
+There is no variable/fixed cost model and no operating leverage. Payer and recipient margin assumptions are
+separate drivers.
 
-| Category | Target leaf | Unit | Reliable LOB groups |
-|---|---|---|---|
-| IP_ACUTE | General Acute Hospitals | admission | COMM, MCR, MCD |
-| OP_HOSP | General Acute Hospitals | visit | COMM, MCR, MCD |
-| IP_PSYCH | Psychiatric Hospitals | inpatient_day | COMM, MCR |
-| IP_REHAB | Rehabilitation Hospitals | admission | — |
-| PROF_PRIMARY | Primary Care | visit | COMM, MCR, MCD |
-| PROF_SPEC | Specialty Care | visit | COMM, MCR, MCD |
-| PROF_BH | Behavioral Health Clinicians | visit | COMM, MCR |
-| SNF | Skilled Nursing Facilities | facility_day | MCR, MCD |
-| HOME_HEALTH | Home Health | episode | — |
-| ASC | Ambulatory Surgery Centers | procedure | COMM, MCR |
-| IMAGING | Imaging Centers | procedure | — |
-| RX_RETAIL | Retail Pharmacy | script_30d | COMM, MCR, MCD |
-| RX_SPECIALTY | Specialty Pharmacy | script_30d | COMM, MCR, MCD |
-| RX_MAIL | Mail-Order Pharmacy | script_30d | COMM, MCR |
-| PAYER_SERVICES (opex) | Payer Services & Technology | — | — |
+### 2.4 Non-pool funding sources (`funding_sources.yaml`, MARKET only)
+
+| Id | Label | Basis | Grain | Targets |
+|---|---|---|---|---|
+| `FS_UNINSURED` | Uninsured & self-pay | population × PMPM | county | all claims categories |
+| `FS_TRAD_MCR` | Traditional Medicare & other public programs | population × PMPM | county | all claims categories |
+| `FS_SUPPLEMENTAL` | Supplemental & state payments | lump sum | state | hospital leaves only |
+
+These are **not** payer profit pools. They never appear as Marimekko tiles. They appear as Sankey sources
+and as components of recipient revenue.
+
+### 2.5 Top-down pools (`economics: top_down`, MARKET only)
+
+Manufacturer, Health Services, and Pharmacy Benefit Services (`RX_PBM`, under the Pharmacy layer) carry
+national revenue and margin **estimates only**. They have no LOB, geography or flow detail. PBM Services
+appears in the Pharmacy column of the Marimekko and **never in value flows**.
+
+### 2.6 Service instances (optional volume decomposition)
+
+```
+allowed (claims-based flow) = INSTANCE_COUNT × average allowed per instance
+utilization                 = INSTANCE_COUNT / members × 1,000
+```
+
+Instances exist only for categories with `instances: true`, and only on `payer_claims` flows. They are
+never present for pharmacy, because pharmacy claim counts mix administrative and drug claims. Utilization
+and unit-price assumptions are offered only there. Utilization changes are **user estimates**: the data
+provides instance counts, not a volume-scaling estimate. Margins stay constant under both.
+
+| Category | Target leaf | Instances |
+|---|---|---|
+| IP_MEDSURG, IP_MATERNITY | Med/Surg IP, Maternity & Newborn | yes |
+| OP_ED, OP_SURG, OP_OTHER | ED, OP Surgery, Other OP | yes |
+| IP_PSYCH, IP_REHAB | Psychiatric, Rehabilitation Hospitals | yes |
+| PROF_PRIMARY, PROF_SPEC, PROF_BH | Primary, Specialty, BH Clinicians | yes |
+| SNF | Skilled Nursing | yes |
+| HOME_HEALTH | Home Health | **no** (edge case) |
+| ASC | Ambulatory Surgery Centers | yes |
+| IMAGING | Imaging Centers | **no** (edge case) |
+| RX_* (7 categories) | Dispensing pharmacy leaves | **never** |
 
 ---
 
 ## 3. `FACT_POOL_METRICS` (fictional)
 
-Grain: `YEAR × STATE × COUNTY × SUBPOOL_ID × LOB` at the leaf's own `geo_level`.
+Grain: `DATASET × YEAR × STATE × COUNTY × NODE_ID × LOB` at the leaf's own `geo_level`.
 
 | Column | Type | Null | Unit | Definition |
 |---|---|---|---|---|
+| `DATASET` | str | no | - | MARKET or ENTERPRISE (datasets.yaml). |
 | `YEAR` | int | no | calendar year | Fiscal = calendar year. |
 | `GEO_LEVEL` | str | no | - | national / state / county — grain of this row. |
 | `STATE` | str | no | - | State id, or 'US' for national rows. |
 | `COUNTY` | str | yes | - | County id; null for state and national rows. |
 | `LAYER_ID` | str | no | - | Top-level taxonomy layer. |
-| `POOL_ID` | str | no | - | Level-1 ancestor of the leaf (informational). |
-| `SUBPOOL_ID` | str | no | - | Leaf taxonomy node. The hierarchy is resolved from the taxonomy, not from these columns. |
-| `LOB` | str | yes | - | Payer LOB for payer rows; null for recipient and top-down rows. |
+| `L1_ID` | str | no | - | Level-1 node below the layer. |
+| `L2_ID` | str | yes | - | Level-2 node; null if the leaf is shallower. |
+| `L3_ID` | str | yes | - | Level-3 node; null if the leaf is shallower. |
+| `L4_ID` | str | yes | - | Level-4 node; null if the leaf is shallower. |
+| `NODE_ID` | str | no | - | Leaf node = deepest non-null level. Must match the taxonomy path. |
+| `LOB` | str | yes | - | Payer LOB for payer rows; null otherwise. |
 | `ENROLLMENT` | float | yes | avg members | Average members in year (member-months / 12). Payer only. |
 | `REVENUE` | float | no | USD/yr | Annual revenue. |
 | `CLAIMS_EXPENSE` | float | yes | USD/yr | Payer claims expense = allowed spend (see caveats). Payer only. |
@@ -128,101 +148,120 @@ Grain: `YEAR × STATE × COUNTY × SUBPOOL_ID × LOB` at the leaf's own `geo_lev
 | `SOURCE_TYPE` | str | no | - | observed / allocated / estimated. |
 | `COVERAGE_LEVEL` | str | no | - | bottom_up / allocated / top_down. |
 
-`ADMIN_EXPENSE` is deliberately **absent** because no reliable administrative expense exists. Residual opex is
-derived by the model (§2).
+There is deliberately no `ADMIN_EXPENSE` column. Residual opex is derived (§2.2).
 
-| Layer | Row grain | `SOURCE_TYPE` | Populated metrics |
+| Layer / node | Row grain | Datasets | `SOURCE_TYPE` |
 |---|---|---|---|
-| Payer | county × LOB | observed | all payer fields |
-| Provider, Pharmacy | state | allocated | `REVENUE`, `OPERATING_MARGIN`, `OPERATING_GAIN` |
-| Payer Services | state | allocated | same as provider |
-| Manufacturer, BH Services, PBM Services | national | estimated | `REVENUE`, `OPERATING_MARGIN`, `OPERATING_GAIN` |
+| Payer leaves | county × LOB | MARKET (estimated), ENTERPRISE (observed) | per dataset |
+| Provider and dispensing pharmacy leaves | state | both | allocated |
+| PBM Services, Manufacturer, Health Services leaves | national | MARKET only | estimated |
 
 ## 4. `FACT_VALUE_FLOWS` (fictional)
 
 | Column | Type | Null | Unit | Definition |
 |---|---|---|---|---|
+| `DATASET` | str | no | - | MARKET or ENTERPRISE (datasets.yaml). |
 | `YEAR` | int | no | calendar year | Fiscal = calendar year. |
-| `GEO_LEVEL` | str | no | - | county for payer-originated flows; state for residual flows. |
-| `STATE` | str | no | - | State id. |
-| `COUNTY` | str | yes | - | Member county; null for state-level residual flows. |
-| `SOURCE_NODE_ID` | str | no | - | Payer leaf, or 'EXT_UNATTRIBUTED' for residual flows. |
+| `GEO_LEVEL` | str | no | - | national / state / county — grain of this row. |
+| `STATE` | str | no | - | State id, or 'US' for national rows. |
+| `COUNTY` | str | yes | - | County id; null for state and national rows. |
+| `SOURCE_NODE_ID` | str | no | - | Payer leaf (payer_claims) or funding source id (funding_pmpm, supplemental). |
 | `TARGET_NODE_ID` | str | no | - | Recipient leaf (receives_flows = true). |
-| `PAYER_LOB` | str | no | - | Payer LOB, or 'UNMODELED' for residual flows. |
-| `SPENDING_CATEGORY` | str | yes | - | Category id; null for residual flows. |
-| `FLOW_KIND` | str | no | - | claims / opex / residual. |
-| `ANNUAL_FLOW_AMOUNT` | float | no | USD/yr | Annual amount (allowed $ for claims flows). |
-| `SERVICE_COUNT` | float | yes | services/yr | Category-specific unit; null unless reliable. |
-| `SERVICE_UNIT` | str | yes | - | Unit id from spending_categories.yaml; null when SERVICE_COUNT is null. |
-| `ALLOCATION_METHOD` | str | no | - | direct_claims_mapping / estimated_opex_share / unattributed_residual. |
+| `PAYER_LOB` | str | yes | - | Payer LOB for payer_claims flows; null for funding-source flows. |
+| `SPENDING_CATEGORY` | str | yes | - | Claims category; null for supplemental flows. |
+| `FLOW_KIND` | str | no | - | payer_claims / funding_pmpm / supplemental. |
+| `ANNUAL_FLOW_AMOUNT` | float | no | USD/yr | Annual amount (allowed $ for claims-based flows). |
+| `INSTANCE_COUNT` | float | yes | instances/yr | Service instances; null unless the category carries instances. |
+| `ALLOCATION_METHOD` | str | no | - | observed_claims / pmpm_benchmark / population_pmpm_estimate / supplemental_estimate. |
 | `SOURCE_TYPE` | str | no | - | observed / estimated. |
 
-| `FLOW_KIND` | From → To | Method | Provenance |
-|---|---|---|---|
-| `claims` | payer leaf (county) → recipient leaf via category | `direct_claims_mapping` | observed allowed spend |
-| `opex` | payer leaf (county) → Payer Services | `estimated_opex_share` (~20% of derived residual opex) | estimated |
-| `residual` | `EXT_UNATTRIBUTED` (state) → recipient leaf | `unattributed_residual` | estimated |
+| `FLOW_KIND` | From → To | Grain | `ALLOCATION_METHOD` | Datasets |
+|---|---|---|---|---|
+| `payer_claims` | payer leaf → recipient leaf via category | county | `observed_claims` (ENTERPRISE) or `pmpm_benchmark` (MARKET) | both |
+| `funding_pmpm` | FS_UNINSURED, FS_TRAD_MCR → recipient leaf via category | county | `population_pmpm_estimate` | MARKET |
+| `supplemental` | FS_SUPPLEMENTAL → hospital leaf | state | `supplemental_estimate` | MARKET |
+
+## 5. `FACT_COVERAGE_POPULATION` (fictional)
+
+Population for funding sources with basis `population_pmpm` (the uninsured, traditional Medicare and other
+public programs). Payer-pool enrollment stays in `FACT_POOL_METRICS.ENROLLMENT`.
+
+| Column | Type | Null | Unit | Definition |
+|---|---|---|---|---|
+| `DATASET` | str | no | - | MARKET or ENTERPRISE (datasets.yaml). |
+| `YEAR` | int | no | calendar year | Fiscal = calendar year. |
+| `GEO_LEVEL` | str | no | - | national / state / county — grain of this row. |
+| `STATE` | str | no | - | State id, or 'US' for national rows. |
+| `COUNTY` | str | yes | - | County id; null for state and national rows. |
+| `FUNDING_SOURCE_ID` | str | no | - | Funding source with basis population_pmpm. |
+| `POPULATION` | float | no | avg persons | Average covered (or uninsured) persons in year. |
+| `SOURCE_TYPE` | str | no | - | estimated. |
 
 ---
 
-## 5. Validations (enforced by `validate_bundle`, tested in `tests/`)
+## 6. Validations (`validate_bundle`, tested in `tests/`)
 
-1. Schema: all columns present, non-nullable columns complete, numeric types.
-2. Unique grain. `SUBPOOL_ID` is a known **leaf**, and `LAYER_ID`, `GEO_LEVEL` and `COVERAGE_LEVEL` match the taxonomy.
-3. Geography sentinels are consistent with `GEO_LEVEL`.
-4. Payer identities: `REVENUE = REVENUE_PMPM × ENROLLMENT × 12` and `CLAIMS_EXPENSE = SPEND_PMPM × ENROLLMENT × 12`. Enrollment > 0 and LOB matches the leaf.
-5. Payer-only fields are null on every other row.
-6. `OPERATING_GAIN = REVENUE × OPERATING_MARGIN`. The two are null together.
-7. **Claims reconciliation:** payer `CLAIMS_EXPENSE` equals Σ claims flows for every year × county × payer leaf.
-8. **Opex bound:** opex flows ≤ derived payer residual opex.
-9. **Recipient reconciliation:** recipient `REVENUE` equals Σ inflows of every kind, for every year × state × leaf.
-10. No flows to or from top-down nodes. Each category maps to exactly its configured target.
-11. Service counts appear only where reliable, carry the category's unit, and are > 0.
-12. Residual flows originate only at `EXT_UNATTRIBUTED` with `PAYER_LOB = 'UNMODELED'`.
+1. Schema: all columns present, non-nullable complete, numeric types. Known `DATASET` values.
+2. Unique grain. `NODE_ID` is a known leaf, and `LAYER_ID` and `L1`–`L4` equal the taxonomy path. `GEO_LEVEL` and `COVERAGE_LEVEL` match the taxonomy.
+3. **Dataset exclusions:** no rows or flows for nodes excluded from a dataset, and no funding flows in a dataset without that source.
+4. Payer identities: `REVENUE = REVENUE_PMPM × ENROLLMENT × 12` and `CLAIMS_EXPENSE = SPEND_PMPM × ENROLLMENT × 12`. LOB matches the leaf, and `SOURCE_TYPE` matches the dataset.
+5. **Enterprise ⊆ market:** enterprise enrollment ≤ market enrollment in every year × county × LOB.
+6. `OPERATING_GAIN = REVENUE × OPERATING_MARGIN`, with both null together. Enterprise recipient margins equal the market pool margins.
+7. **Claims reconciliation:** payer `CLAIMS_EXPENSE` = Σ `payer_claims` flows for every dataset × year × county × payer leaf.
+8. **Recipient reconciliation:** recipient `REVENUE` = Σ inflows of every kind for every dataset × year × state × leaf.
+9. Funding flows originate at a funding source, have a null LOB, and have a `FLOW_KIND` consistent with the source's basis. `funding_pmpm` flows have a population row.
+10. Supplemental payments go only to leaves under `targets_under`, and carry no category or instances.
+11. Each category maps to exactly its target. Instances appear only on categories with instance data (never pharmacy) and are > 0.
+12. Population rows are positive, at the source's grain, for population-based sources only.
 
-Tolerance: relative 1e-9. The identities are exact by construction; the tolerance only absorbs floating-point error.
+Tolerance: relative 1e-9. The identities are exact by construction.
 
-## 6. Built-in edge cases
+## 7. Built-in edge cases
 
 | Case | Where |
 |---|---|
-| Negative payer margins | Medicaid ABD (structurally), several MA/Medicaid cells in 2024–25 |
-| Negative provider margins | Psychiatric Hospitals (all years); SNF and Primary Care in some years |
+| Negative payer margins | Medicaid ABD (structural), several MA and Medicaid cells in 2024–25 |
+| Negative recipient margins | Psychiatric Hospitals (all years), Value-Based Care Enablement (top-down), SNF and Primary Care in some years |
 | Missing margin (state) | Rehabilitation Hospitals in Westmoor and Lakeland, all years |
-| Missing margin (years) | Imaging Centers 2019–20; Behavioral Health Services (top-down) 2019–20 |
+| Missing margin (years) | Imaging Centers 2019–20; Other BH Services (top-down) 2019–20 |
 | LOB absent | Expansion Adults: none in Southridge; Central Plains from 2021 |
-| Partial attribution | Payer Services: estimated opex-share inflows + unattributed residual |
-| No service counts | IP_REHAB, HOME_HEALTH, IMAGING (all LOBs); IP_PSYCH, PROF_BH (Medicaid); SNF (Commercial); ASC, RX_MAIL (Medicaid) |
-| Top-down only | Manufacturer layer, BH Services, PBM Services |
+| No enterprise presence | Westmoor (all LOBs); enterprise SNP in Southridge and Central Plains (market PMPMs fall back to the national benchmark, re-priced to the state) |
+| No instances | Home Health, Imaging; all pharmacy |
+| Coverage shifts | Uninsured population rises during the 2023–24 Medicaid unwinding |
+| Top-down only | Manufacturer, Health Services, PBM Services |
 
 ---
 
-## 7. Metadata / configuration (`profit_pools/core/config/`)
+## 8. Metadata / configuration (`profit_pools/core/config/`)
 
 | File | Purpose |
 |---|---|
-| `taxonomy.yaml` | Arbitrary-depth pool tree. Inherited `economics`, `coverage`, `geo_level`, `receives_flows`. Payer leaves name a `lob`. |
-| `lobs.yaml` | LOB groups → LOBs, plus the `UNMODELED` pseudo-LOB for residual flows. |
-| `spending_categories.yaml` | Category → target leaf, service unit and definition, reliable LOB groups. |
+| `taxonomy.yaml` | Pool tree (L1–L4 below the layer, ragged). Inherited `economics`, `coverage`, `geo_level`, `receives_flows`. |
+| `datasets.yaml` | MARKET / ENTERPRISE: labels, excluded nodes, payer source type, funding sources. |
+| `funding_sources.yaml` | Uninsured, traditional Medicare & public, supplemental: basis, grain, eligible targets. |
+| `lobs.yaml` | LOB groups → LOBs. |
+| `spending_categories.yaml` | Category → recipient leaf (one each), instance availability, instance-unit definition. |
 | `geography.yaml` | Fictional states and counties, weights, price index, Medicaid expansion year. |
 | `periods.yaml` | History, base year, forecast horizon. |
-| `metrics.yaml` | Metric catalog: unit, additivity, provenance by economics type. |
-| `drivers.yaml` | Scenario driver catalog: eligible economics, required data, methods, pipeline stage. |
+| `metrics.yaml` | Metric catalog: unit, additivity, provenance. |
+| `drivers.yaml` | Scenario driver catalog: scope kind, required data, methods, stage. |
+| `baseline_forecast.yaml` | Baseline annual rates with hierarchical lookup. |
+| `methodology.yaml` | Text for "How is provider revenue estimated?" and other methodology panels, by dataset. |
 
-## 8. Provenance vocabulary (UI labels)
+## 9. Provenance vocabulary (UI labels)
 
-| Tag | Meaning | Example |
+| Tag | Meaning | Examples |
 |---|---|---|
-| **Observed** | Fact-table input | payer revenue, enrollment, allowed spend, provider margin |
-| **Allocated** | Observed amount assigned to a recipient by a mapping rule | provider attributed revenue |
-| **Derived** | Arithmetic consequence of other values | residual opex, provider gain, PMPMs, MLR |
-| **Estimated** | Top-down or residual estimate | manufacturer revenue, unattributed residual, opex-share flows |
+| **Observed** | Enterprise fact-table input | enterprise enrollment, revenue, claims, gain |
+| **Estimated** | Market estimate or top-down | market enrollment, benchmark PMPMs, uninsured population, supplemental payments, manufacturer revenue |
+| **Allocated** | Spending assigned to a recipient by a mapping | recipient revenue |
+| **Derived** | Arithmetic consequence of other values | residual opex, recipient gain, PMPMs, MLR |
+| **Projected** | Forecast-year value from baseline growth rates | every 2026–2031 value |
 | **Assumed** | Changed by an active scenario assumption | any value touched by the ledger |
-| **Unavailable** | Not supported by the data | rehab margin in Westmoor, county detail for providers |
+| **Unavailable** | Not supported by the data | rehab margin in Westmoor, top-down pools by state, instances for pharmacy |
 
-## 9. Planned additions (not yet built)
+## 10. Planned additions
 
-* **Ownership (Phase 4b):** a fictional integrated organization owns a share of payer enrollment by LOB × state,
-  and an owned asset that is a carve-out of a recipient leaf. A `routing_share` driver moves the org's
-  allowed spend from external providers to the owned asset. Intra-organization flows are eliminated in the
-  consolidated view. A config file `ownership.yaml` will be added with this phase.
+* **Ownership (Phase 4b):** an owned-asset carve-out of a recipient leaf, with a `routing_share` driver that
+  moves enterprise allowed spend from external providers to the owned asset. Intra-organization flows are
+  eliminated in the consolidated view. This will add `ownership.yaml`.

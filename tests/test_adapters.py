@@ -52,3 +52,9 @@ def test_factory(monkeypatch):
     assert isinstance(get_adapter(), SnowflakeAdapter)
     with pytest.raises(ValueError):
         get_adapter("oracle")
+
+
+def test_coverage_population_filter(adapter):
+    p = adapter.coverage_population(years=[2025], states=["SRG"])
+    assert set(p["YEAR"]) == {2025} and set(p["STATE"]) == {"SRG"}
+    assert set(p["FUNDING_SOURCE_ID"]) == {"FS_UNINSURED", "FS_TRAD_MCR"}

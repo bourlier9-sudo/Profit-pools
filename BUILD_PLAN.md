@@ -5,8 +5,8 @@ Status legend: ✅ done · 🔄 in progress · ⏳ planned
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Project docs, scaffold, requirements, pytest | ✅ |
-| 1 | Configuration, taxonomy, synthetic data, contracts, adapters, reconciliation tests | ✅ |
-| 2 | Baseline driver cube, forecast projection, engine skeleton (no assumptions), aggregation, `ModelResult` | ⏳ |
+| 1 | Configuration, taxonomy, synthetic data, contracts, adapters, reconciliation tests (revised: datasets, explicit revenue components, instances, L1–L4) | ✅ |
+| 2 | Baseline driver cube, forecast projection, engine (no assumptions), roll-ups, geography, coverage, `ModelResult` | ✅ |
 | 3 | App shell, design system, KPI strip, **Marimekko and drilldown**, trends and detail (Section B) | ⏳ |
 | 4 | Scenario engine: assumptions, hierarchical resolution, validation, ledger, bridge. Builder dialog. Compare mode | ⏳ |
 | 4b | Ownership and value capture: integrated org, owned asset routing, consolidation | ⏳ |
@@ -26,56 +26,66 @@ BUILD_PLAN.md, `requirements.txt`, `pyproject.toml` (pytest config), package lay
 derived payer residual opex, allowed = claims = receipts, optional volume decomposition, and hierarchical
 assumptions.
 
-## Phase 1: configuration and synthetic data ✅
+## Phase 1: configuration and synthetic data ✅ (revised 2026-10-18)
 
 **Deliverables:**
-* `core/config/*.yaml`: taxonomy (arbitrary depth, inherited attributes), LOBs, spending categories with
-  service units and reliability, fictional geography, periods, metric catalog, driver catalog.
-* `core/taxonomy.py`: `Taxonomy`, `Metadata` and cross-validation.
-* `core/data/contracts.py`: fictional schemas and `validate_bundle` (12 rule families).
-* `core/data/synthetic.py`: deterministic generator, 2019–2025, 6 states, 21 counties, 9 LOBs, 14 claims
-  categories.
-* `core/data/adapters.py`: `DataAdapter` protocol, `SyntheticAdapter`, unconnected `SnowflakeAdapter`, and a factory.
-* Tests: 43 passing (taxonomy, reconciliation, edge cases, validator corruption tests, adapters,
-  documentation sync).
+* `core/config/*.yaml`:
+  * taxonomy: L1–L4 below the layer, ragged, with PBM Services under Pharmacy
+  * datasets: MARKET / ENTERPRISE
+  * funding sources: uninsured, traditional Medicare & public, supplemental
+  * LOBs, and spending categories (one per recipient leaf, instance availability)
+  * fictional geography, periods
+  * metric and driver catalogs, baseline forecast rates
+  * methodology text
+* `core/taxonomy.py`: `Taxonomy` and cross-validated `Metadata`, covering datasets, funding sources and the
+  L1–L4 limit.
+* `core/data/contracts.py`: three fictional tables (`FACT_POOL_METRICS`, `FACT_VALUE_FLOWS`,
+  `FACT_COVERAGE_POPULATION`) and `validate_bundle`.
+* `core/data/synthetic.py`: both datasets, 2019–2025. Market payer PMPMs are enterprise benchmarks × a market
+  factor. Recipient revenue is built from explicit components with no plug.
+* `core/data/adapters.py`: synthetic adapter and an unconnected Snowflake stub.
 
 **Acceptance (met):**
-* The dataset passes every contract validation, including payer PMPM identities, claims ↔ flows,
-  recipient revenue ↔ inflows, and gain = revenue × margin.
-* County → state → national sums agree.
-* The built-in edge cases are present and tested: negative margins, missing margins, absent LOB, partial
-  attribution, unreliable service counts, top-down pools.
-* Adding a taxonomy breakdown or a deeper level is configuration-only (tested).
+* Zero contract violations across both datasets.
+* Enterprise ⊆ market.
+* Recipient revenue = Σ named inflows.
+* Instances never appear on pharmacy.
+* Edge cases are tested.
 
-**Snapshot (2025, national, fictional):**
-
-| Layer | Revenue | Gain | Margin |
-|---|---|---|---|
-| Payer | $537B | $5.9B | 1.1% |
-| Provider | $693B | $37.9B (97% margin coverage) | 5.5% |
-| Pharmacy | $199B | $7.3B | 3.7% |
-| Manufacturer | $218B | $45.1B | 20.7% |
-| Health Services | $45B | $4.7B | 10.3% |
-
-## Phase 2: baseline model and engine skeleton ⏳
+## Phase 2: baseline model and engine ✅
 
 **Deliverables:**
-* `core/config/baseline_forecast.yaml` (default growth rates by LOB, category and pool).
-* `model/baseline.py`: driver cube from facts, with forecast projection to 2031.
-* `model/engine.py`: stages 1–9 with no assumptions applied, producing `ModelResult`.
-* `model/views.py`: roll-up to any taxonomy node, geography filter, and coverage reporting.
+* `model/cube.py`: driver cube from facts, a baseline forecast to 2031 with hierarchical rate lookup, and a
+  pluggable rate function (the hook for scenario growth assumptions).
+* `model/engine.py`: the staged pipeline producing `ModelResult` (pools + flows, both datasets, 2019–2031).
+* `model/views.py`: roll-up to any node, national/state/county semantics, margin coverage, unavailability
+  reasons, trends, totals and realized CAGR.
 
-**Acceptance:**
-* For history years, engine output equals the facts exactly.
-* Forecast identities hold.
-* Roll-ups reconcile at every hierarchy level and geography.
-* Coverage is reported for missing margins.
-* Top-down pools are excluded from state and county views, with an explanation.
+**Acceptance (met; 83 tests):**
+* History reproduces the facts exactly: pools, payer detail, flows and instances.
+* Forecast identities hold. Recipient margins are constant.
+* Growth compounds from the base year. Allowed PMPM grows by (1+u)(1+p).
+* Roll-ups reconcile at every node in both datasets. States sum to national, and counties to state.
+* The county view excludes state-level supplemental payments (noted).
+* Top-down pools are reported as unavailable below national.
+* Margins are computed on revenue with margin data, with coverage reported.
+* A baseline run takes about 0.5 seconds.
+
+**Snapshot (national, fictional; revenue $B / gain $B / margin):**
+
+| Layer | Market 2025 | Market 2031 | Enterprise 2025 |
+|---|---|---|---|
+| Payer | 542 / 4.2 / 0.8% | 829 / 19.2 / 2.3% | 98 / 1.1 / 1.1% |
+| Provider | 508 / 33.2 / 6.6% | 713 / 47.1 / 6.6% | 66 / 4.3 / 6.6% |
+| Pharmacy | 145 / 6.7 / 4.6% | 228 / 10.8 / 4.8% | 21 / 0.9 / 4.4% |
+| Manufacturer | 236 / 46.9 / 19.9% | 322 / 65.6 / 20.3% | — |
+| Health Services | 28 / 2.6 / 9.2% | 39 / 3.7 / 9.4% | — |
 
 ## Phase 3: shell, design system, Marimekko ⏳
 
 **Acceptance:**
-* `streamlit run app.py` renders the shell, the global bar, the KPI strip and the hero Marimekko.
+* `streamlit run app.py` renders the shell, the global bar (including the dataset toggle), the KPI strip and
+  the hero Marimekko.
 * Drilldown and breadcrumbs work through `on_select` and the synchronized selector.
 * Tooltips show provenance and missing-margin hatching.
 * Section B trends follow the selection.
@@ -84,13 +94,15 @@ assumptions.
 ## Phase 4: scenario engine and builder ⏳
 
 **Acceptance:**
-* Hierarchical scopes resolve per ARCHITECTURE.md §5.2.
+* Hierarchical scopes, including dataset and funding-source scopes, resolve per ARCHITECTURE.md §6.2.
 * Conflicts and supersessions are reported.
 * Propagation tests cover enrollment, allowed PMPM, utilization/price, payer and provider margin,
   unattributed revenue and top-down drivers.
 * No double counting.
 * The bridge sums to the total Δ.
 * The builder dialog supports full CRUD, reorder, enable/disable, preview, draft vs applied, and reset.
+* It includes the "How is provider revenue estimated?" panel.
+* Utilization and opex volume-scaling assumptions are offered only as user estimates, and never for pharmacy.
 
 ## Phase 5: Sankey ⏳
 
@@ -136,4 +148,11 @@ assumptions.
 | 2026-10-18 | Fictional state and county names, to avoid implying real data. |
 | 2026-10-18 | Facts are stored at their finest grain only, with no pre-aggregated rows, to prevent double counting. |
 | 2026-10-18 | No ADMIN_EXPENSE column. Residual opex is derived by the model. |
+| 2026-10-18 | **Revised (user):** the market is primary. Market payer PMPMs are benchmarks from enterprise data. Recipient revenue = explicit components (payer claims, uninsured, traditional Medicare & public, supplemental), with no unattributed plug. |
+| 2026-10-18 | **Revised (user):** a dataset toggle covers market vs the company book. The company view excludes Manufacturer, Health Services and PBM Services. The company label is configurable, and the fictional build uses "Enterprise (fictional)". |
+| 2026-10-18 | **Revised (user):** volume is a single "instances" count, provider only, never pharmacy (admin vs drug claims). Utilization and opex volume scaling are user-entered estimates only. |
+| 2026-10-18 | **Revised (user):** PBM Services moves under Pharmacy (top-down, Marimekko only, no flows). Hierarchy depth: Payer and Manufacturer L1–L2, Health Services L1–L3, Provider and Pharmacy ≤ L4. |
+| 2026-10-18 | Enterprise recipient gain uses the pool's market margin: profit associated with enterprise members, not enterprise profit. |
+| 2026-10-18 | Market and enterprise drivers are independent in the engine. Benchmarks are applied when the data is built, not re-linked during scenarios. |
+| 2026-10-18 | Overlapping assumptions compound by default. `override` mode replaces broader assumptions (pending user confirmation). |
 | 2026-10-18 | PPTX via python-pptx native charts and shapes. No Kaleido or Chrome dependency. |

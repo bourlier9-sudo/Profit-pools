@@ -1,6 +1,7 @@
 # Payer lines of business — FICTIONAL. Two-level LOB hierarchy used by
-# filters, Sankey roll-ups and assumption scoping.
-schema_version: 1
+# filters, Sankey roll-ups and assumption scoping. Non-pool funding (uninsured,
+# traditional Medicare, supplemental) is configured in funding_sources.yaml.
+schema_version: 2
 
 groups:
   - {id: COMM, label: Commercial}
@@ -17,7 +18,3 @@ lobs:
   - {id: MCD_TANF, label: TANF / CHIP, group: MCD}
   - {id: MCD_EXP, label: Expansion Adults, group: MCD}
   - {id: MCD_ABD, label: Aged, Blind & Disabled, group: MCD}
-
-# Pseudo-LOB used on unattributed residual flows (other payers, traditional
-# Medicare FFS, self-pay, etc.). Never modeled bottom-up.
-unmodeled_lob: {id: UNMODELED, label: Other payers & self-pay (not modeled)}

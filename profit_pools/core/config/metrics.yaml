@@ -1,93 +1,73 @@
 # Metric catalog. `provenance` states how each metric is obtained for each
-# economics type, so the UI can label values as observed / allocated /
-# derived / estimated / unavailable without guessing.
+# economics type (market dataset; enterprise payer metrics are observed — see
+# datasets.yaml → payer_source_type).
 #
 # additive: true  → may be summed across pools, geographies and LOBs
 # additive: false → must be recomputed from additive components after aggregation
-schema_version: 1
+schema_version: 2
 
 metrics:
   revenue:
     label: Revenue
     unit: usd_annual
     additive: true
-    provenance:
-      payer_pnl: observed
-      margin_on_revenue: allocated      # attributed inflows + estimated residual
-      top_down: estimated
+    provenance: {payer_pnl: estimated, margin_on_revenue: allocated, top_down: estimated}
   operating_gain:
     label: Operating gain
     unit: usd_annual
     additive: true
-    provenance:
-      payer_pnl: observed
-      margin_on_revenue: derived        # revenue × observed margin
-      top_down: estimated
+    provenance: {payer_pnl: estimated, margin_on_revenue: derived, top_down: estimated}
   operating_margin:
     label: Operating margin
     unit: ratio
     additive: false
-    formula: operating_gain / revenue
-    provenance:
-      payer_pnl: derived
-      margin_on_revenue: observed
-      top_down: estimated
+    formula: operating_gain / revenue (over revenue with margin data)
+    provenance: {payer_pnl: derived, margin_on_revenue: estimated, top_down: estimated}
   enrollment:
     label: Enrollment
     unit: members_avg
     additive: true
-    provenance:
-      payer_pnl: observed
-      margin_on_revenue: unavailable
-      top_down: unavailable
+    provenance: {payer_pnl: estimated, margin_on_revenue: unavailable, top_down: unavailable}
   claims_expense:
     label: Claims expense (allowed)
     unit: usd_annual
     additive: true
-    provenance:
-      payer_pnl: observed
-      margin_on_revenue: unavailable
-      top_down: unavailable
+    provenance: {payer_pnl: estimated, margin_on_revenue: unavailable, top_down: unavailable}
   residual_opex:
     label: Residual operating expense
     unit: usd_annual
     additive: true
-    formula: revenue − claims_expense − operating_gain   (payer); revenue − operating_gain (others)
-    provenance:
-      payer_pnl: derived
-      margin_on_revenue: derived
-      top_down: derived
+    formula: revenue − claims_expense − operating_gain (payer); revenue − operating_gain (others)
+    provenance: {payer_pnl: derived, margin_on_revenue: derived, top_down: derived}
   revenue_pmpm:
     label: Revenue PMPM
     unit: usd_pmpm
     additive: false
     formula: revenue / (enrollment × 12)
-    provenance:
-      payer_pnl: derived
-      margin_on_revenue: unavailable
-      top_down: unavailable
+    provenance: {payer_pnl: derived, margin_on_revenue: unavailable, top_down: unavailable}
   spend_pmpm:
     label: Allowed spend PMPM
     unit: usd_pmpm
     additive: false
     formula: claims_expense / (enrollment × 12)
-    provenance:
-      payer_pnl: derived
-      margin_on_revenue: unavailable
-      top_down: unavailable
+    provenance: {payer_pnl: derived, margin_on_revenue: unavailable, top_down: unavailable}
   medical_loss_ratio:
     label: Medical loss ratio
     unit: ratio
     additive: false
     formula: claims_expense / revenue
-    provenance:
-      payer_pnl: derived
-      margin_on_revenue: unavailable
-      top_down: unavailable
+    provenance: {payer_pnl: derived, margin_on_revenue: unavailable, top_down: unavailable}
+  instances:
+    label: Service instances
+    unit: instances_annual
+    additive: true
+    provenance: {payer_pnl: unavailable, margin_on_revenue: estimated, top_down: unavailable}
 
 units:
   usd_annual: {label: "USD per year", display: "$B / $M"}
   usd_pmpm: {label: "USD per member per month", display: "$ PMPM"}
   members_avg: {label: "Average members (member-months ÷ 12)", display: "M members"}
   ratio: {label: "Ratio", display: "%"}
-  count_annual: {label: "Services per year (category-specific unit)", display: "count"}
+  instances_annual: {label: "Service instances per year", display: "count"}
+  instances_per_1000: {label: "Instances per 1,000 members per year", display: "per 1,000"}
+  usd_per_instance: {label: "Average allowed per instance", display: "$"}

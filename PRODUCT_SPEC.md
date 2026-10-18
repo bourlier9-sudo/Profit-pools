@@ -23,7 +23,10 @@ analytical model**:
 * A persistent, restrained left navigation lists the modules from a registry. Only **Profit Pools Explorer**
   is registered. Future modules (Enrollment Intelligence, Quality Intelligence, Healthcare Services
   Analytics) are added by registering them, with no nonfunctional placeholders.
-* A global bar holds Year, Geography, View (Baseline / Scenario / Compare), Scope, the Scenario chip and Export.
+* A global bar holds **Dataset** (Total market / Enterprise), Year, Geography, View (Baseline / Scenario /
+  Compare), Scope, the Scenario chip and Export.
+  * The Enterprise label is configurable and ships as "Enterprise (fictional)".
+  * The Enterprise view hides Manufacturer, Health Services and PBM Services.
 * A contextual inspector on the right shows details for the current selection.
 * A consistent export menu.
 
@@ -41,28 +44,42 @@ There is no separate page for assumptions. The assumption builder opens from the
 
 ## 5. Economic model (agreed rules)
 
-1. **Payers:** gain = revenue − claims − residual opex.
-   * Residual opex is derived from observed revenue, claims and gain.
-   * In scenarios, residual opex PMPM is held constant, so it scales with enrollment.
-   * A claims-PMPM change moves payer gain one-for-one, and premium does not move unless separately assumed.
-2. **Providers, pharmacy and other flow recipients:** revenue = attributed payer allowed spend plus an
-   unattributed residual. Gain = revenue × operating margin.
-   * The margin is constant unless explicitly assumed.
-   * There is no variable/fixed-cost or operating-leverage model.
-   * Remaining expense is a derived residual.
-3. **Allowed spend** is treated as both the payer's modeled claims outflow and the provider's receipt. That
-   allowed amounts include member cost sharing is a documented caveat.
-4. **Service volume** (optional): allowed = services × average allowed per service, only where counts are
-   reliable. Utilization vs price assumptions are offered only there, and neither changes margin.
-5. **Top-down pools** (Manufacturer, some Health Services): national revenue and margin estimates only. They
-   have no LOB, geography or flow attribution.
-6. **Payer margin and provider margin assumptions are separate**, and they never cross-apply.
+1. **Two datasets, one model.**
+   * **Total market** is the primary view. Market payer cells are market enrollment × PMPM benchmarks derived
+     from the enterprise's experience.
+   * **Enterprise** is the company's observed book. It excludes Manufacturer, Health Services and PBM Services.
+   * Both run through the same engine.
+2. **Payers:** gain = revenue − claims − residual opex.
+   * Residual opex is derived. Its PMPM is held constant in scenarios, so it scales with enrollment.
+   * A user may enter an opex volume-scaling assumption, but no default estimate is offered.
+   * Claims-PMPM changes move payer gain, and premium does not move unless separately assumed.
+3. **Provider and dispensing-pharmacy revenue** is the sum of explicit estimated components, with no plug:
+   * payer claims (members × allowed PMPM by category),
+   * uninsured & self-pay (population × PMPM),
+   * traditional Medicare & other public programs (population × PMPM),
+   * supplemental & state payments (hospitals only, annual by state).
+
+   Gain = revenue × operating margin. The margin is constant unless explicitly assumed. Remaining expense is a
+   derived residual. In the Enterprise view, recipient revenue is the enterprise's own claims spend with the
+   pool, valued at the pool's market margin.
+4. **Allowed spend** is both the payer's modeled claims outflow and the provider's receipt. That allowed
+   amounts include member cost sharing is a documented caveat.
+5. **Service volume** is a single **instance** count on provider categories where available, never pharmacy.
+   Allowed = instances × average allowed per instance. Utilization changes are user-entered assumptions,
+   and neither utilization nor price changes margin.
+6. **Top-down pools** (Manufacturer, Health Services, PBM Services under Pharmacy) are national revenue and margin
+   estimates only. They appear in the Marimekko and never in flows.
+7. **Payer margin and provider margin assumptions are separate**, and they never cross-apply.
+8. **Hierarchy depth below each layer:** Payer and Manufacturer L1–L2, Health Services L1–L3, Provider and
+   Pharmacy up to L4.
 
 ## 6. Scenarios
 
 * A scenario has an id, name, description, base year, schema version and an ordered list of assumptions.
-  Each assumption has a driver, method (pct / pp / set / delta), mode (adjust / override), value, scope
-  (taxonomy node at **any level**, LOBs or LOB groups, geography, years), enabled flag and notes.
+  Each assumption has a driver, method (pct / pp / set / delta), mode (adjust / override), value, scope, an
+  enabled flag and notes.
+  * The scope covers dataset (market / enterprise / both), a taxonomy node at **any level**, LOBs or LOB
+    groups, funding sources, geography and years.
 * Overlapping assumptions resolve deterministically by specificity, override vs adjust, then list order.
   Conflicts, superseded adjustments and order-sensitive cells are shown to the user (ARCHITECTURE.md §5.2).
 * Only drivers valid for the selected node's economics and data coverage are offered.
@@ -71,9 +88,14 @@ There is no separate page for assumptions. The assumption builder opens from the
   * Create, rename, add, edit, duplicate, enable or disable, delete and reorder assumptions.
   * Each assumption shows a preview of the affected descendants and totals.
   * Reset, compare with baseline, and import or export JSON.
+  * A **"How is provider revenue estimated?"** panel shows text from `methodology.yaml` for the active dataset.
+    Payer-economics and top-down notes sit alongside it.
   * Draft edits stay distinct from the applied scenario.
 
 ## 7. Value flows
+
+* Sources are payer segments plus, in the market view, the uninsured, traditional Medicare & public, and
+  supplemental payments. Top-down pools, including PBM Services, never appear in flows.
 
 * Users choose the visible layers or columns.
 * Granularity is set **independently per dimension**: payer LOB (all / group / individual LOB), provider

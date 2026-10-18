@@ -14,14 +14,19 @@ Track progress in BUILD_PLAN.md and update it at the end of every phase.
 * **Never hardcode the taxonomy.** No fixed depth, pool list, LOB list or layer list in code. Use
   `Metadata` / `Taxonomy`, which are driven by YAML in `core/config/`.
 * **Agreed economics** (do not change without the user's approval):
-  * Recipients: gain = revenue × margin. The margin is constant unless an explicit `provider_margin`
-    assumption changes it. There is no cost-structure or operating-leverage model.
-  * Payers: gain = revenue − claims − residual opex. Residual opex is derived. Its PMPM is held constant
-    in scenarios, so it scales with enrollment.
+  * Two datasets (MARKET total market, ENTERPRISE company book) share one engine. ENTERPRISE excludes
+    Manufacturer, Health Services and PBM Services. Never present fictional numbers under a real company's name.
+  * Recipients: revenue = Σ explicit inflows (payer claims, uninsured, traditional Medicare & public,
+    supplemental). There is **no plug**. Gain = revenue × margin, and the margin is constant unless a
+    `provider_margin` assumption changes it. There is no cost-structure model.
+  * Payers: gain = revenue − claims − residual opex. Residual opex is derived. Its PMPM is held constant in
+    scenarios, with optional user-entered volume scaling.
   * Allowed spend = payer claims outflow = provider receipt (cost-sharing caveat documented).
-  * Volume decomposition only where service counts are reliable. Units are never mixed across categories.
-  * Top-down pools have no LOB, geography or flow detail.
+  * Volume is a single "instances" count, on provider categories only and never pharmacy. Utilization changes
+    are user estimates.
+  * Top-down pools (Manufacturer, Health Services, PBM Services) have no LOB, geography or flow detail.
   * Payer and provider margin assumptions never cross-apply.
+  * Hierarchy below the layer: Payer and Manufacturer L1–L2, Health Services L1–L3, Provider and Pharmacy ≤ L4.
 * **Assumptions target drivers, never derived outputs.** Each driver is consumed by exactly one pipeline stage.
 * **Null = unavailable, not zero.** Propagate it. Show coverage. Never fill with 0 in aggregation without
   also reporting coverage.
@@ -52,7 +57,7 @@ Track progress in BUILD_PLAN.md and update it at the end of every phase.
 ```bash
 pip install -r requirements.txt
 python -m pytest
-python -m profit_pools.core.data.synthetic     # dataset summary + validation
+python -m profit_pools.core.data.synthetic     # dataset summary + validation (both datasets)
 streamlit run app.py                           # from Phase 3
 ```
 

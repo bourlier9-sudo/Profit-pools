@@ -175,6 +175,13 @@ class Taxonomy:
         return max(n.depth for n in self._nodes.values())
 
 
+
+    def level_ids(self, node_id: str, max_levels: int) -> list[str | None]:
+        """L1..L{max_levels} ids below the layer for a node (None-padded)."""
+        below = [n.id for n in self.path(node_id)[1:]]
+        return below + [None] * (max_levels - len(below))
+
+
 @dataclass(frozen=True)
 class Lob:
     id: str
@@ -186,8 +193,6 @@ class Lob:
 class LobCatalog:
     groups: dict[str, str]  # id → label
     lobs: dict[str, Lob]
-    unmodeled_id: str
-    unmodeled_label: str
 
     def in_group(self, group_id: str) -> list[str]:
         return [l.id for l in self.lobs.values() if l.group == group_id]
@@ -202,13 +207,28 @@ class SpendingCategory:
     id: str
     label: str
     target: str
-    kind: str  # "claims" | "opex"
-    service_unit: str | None
-    service_definition: str | None
-    reliable_lob_groups: tuple[str, ...]
+    has_instances: bool
 
-    def has_reliable_services(self, lob_group: str | None) -> bool:
-        return self.service_unit is not None and lob_group in self.reliable_lob_groups
+
+@dataclass(frozen=True)
+class FundingSource:
+    id: str
+    label: str
+    short_label: str
+    basis: str  # "population_pmpm" | "lump_sum"
+    geo_level: str
+    targets_under: tuple[str, ...]
+    description: str
+
+
+@dataclass(frozen=True)
+class Dataset:
+    id: str
+    label: str
+    short_label: str
+    excluded_nodes: tuple[str, ...]
+    payer_source_type: str
+    funding_sources: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -266,14 +286,33 @@ class Metadata:
     """Everything the model and UI need to interpret the fact tables."""
 
     taxonomy: Taxonomy
+    max_levels: int
     lobs: LobCatalog
     categories: dict[str, SpendingCategory]
-    service_units: dict[str, dict[str, str]]
+    instance_unit: dict[str, str]
+    funding_sources: dict[str, FundingSource]
+    datasets: dict[str, Dataset]
+    default_dataset: str
     geography: Geography
     periods: Periods
 
     def categories_for_target(self, leaf_id: str) -> list[SpendingCategory]:
         return [c for c in self.categories.values() if c.target == leaf_id]
+
+    def in_dataset(self, node_id: str, dataset_id: str) -> bool:
+        """False when the node or any ancestor is excluded from the dataset."""
+        excluded = set(self.datasets[dataset_id].excluded_nodes)
+        return not any(n.id in excluded for n in self.taxonomy.path(node_id))
+
+    def leaves_in_dataset(self, dataset_id: str, node_id: str | None = None) -> list[Node]:
+        return [n for n in self.taxonomy.leaves(node_id) if self.in_dataset(n.id, dataset_id)]
+
+    def supplemental_targets(self, source_id: str) -> list[str]:
+        fs = self.funding_sources[source_id]
+        out: list[str] = []
+        for anc in fs.targets_under:
+            out += [n.id for n in self.taxonomy.leaves(anc) if n.receives_flows]
+        return out
 
 
 def build_lobs(spec: Mapping[str, Any]) -> LobCatalog:
@@ -282,21 +321,14 @@ def build_lobs(spec: Mapping[str, Any]) -> LobCatalog:
     for l in lobs.values():
         if l.group not in groups:
             raise TaxonomyError(f"LOB {l.id} references unknown group {l.group}")
-    um = spec["unmodeled_lob"]
-    return LobCatalog(groups, lobs, um["id"], um["label"])
+    return LobCatalog(groups, lobs)
 
 
 def build_categories(spec: Mapping[str, Any]) -> dict[str, SpendingCategory]:
-    out: dict[str, SpendingCategory] = {}
-    for kind, key in (("claims", "claims_categories"), ("opex", "opex_categories")):
-        for c in spec.get(key, []):
-            out[c["id"]] = SpendingCategory(
-                id=c["id"], label=c["label"], target=c["target"], kind=kind,
-                service_unit=c.get("service_unit"),
-                service_definition=c.get("service_definition"),
-                reliable_lob_groups=tuple(c.get("reliable_lob_groups") or ()),
-            )
-    return out
+    return {
+        c["id"]: SpendingCategory(c["id"], c["label"], c["target"], bool(c.get("instances", False)))
+        for c in spec["claims_categories"]
+    }
 
 
 def build_geography(spec: Mapping[str, Any]) -> Geography:
@@ -312,18 +344,48 @@ def build_geography(spec: Mapping[str, Any]) -> Geography:
                      {k: float(v) for k, v in spec["state_weights"].items()})
 
 
+def build_funding_sources(spec: Mapping[str, Any]) -> dict[str, FundingSource]:
+    return {
+        f["id"]: FundingSource(
+            id=f["id"], label=f["label"], short_label=f.get("short_label", f["label"]),
+            basis=f["basis"], geo_level=f["geo_level"],
+            targets_under=tuple(f.get("targets_under") or ()), description=f.get("description", ""),
+        )
+        for f in spec["funding_sources"]
+    }
+
+
+def build_datasets(spec: Mapping[str, Any]) -> tuple[dict[str, Dataset], str]:
+    out = {
+        k: Dataset(id=k, label=v["label"], short_label=v.get("short_label", v["label"]),
+                   excluded_nodes=tuple(v.get("excluded_nodes") or ()),
+                   payer_source_type=v["payer_source_type"],
+                   funding_sources=tuple(v.get("funding_sources") or ()))
+        for k, v in spec["datasets"].items()
+    }
+    return out, spec["default"]
+
+
 def build_metadata(
     taxonomy_spec: Mapping[str, Any] | None = None,
     lob_spec: Mapping[str, Any] | None = None,
     category_spec: Mapping[str, Any] | None = None,
     geography_spec: Mapping[str, Any] | None = None,
     period_spec: Mapping[str, Any] | None = None,
+    funding_spec: Mapping[str, Any] | None = None,
+    dataset_spec: Mapping[str, Any] | None = None,
 ) -> Metadata:
     """Assemble and cross-validate metadata. Any spec may be overridden (tests, future data)."""
-    taxonomy = Taxonomy(taxonomy_spec or load_config("taxonomy"))
+    tax_spec = taxonomy_spec or load_config("taxonomy")
+    taxonomy = Taxonomy(tax_spec)
+    max_levels = int(tax_spec.get("max_levels_below_layer", taxonomy.max_depth()))
+    if taxonomy.max_depth() > max_levels:
+        raise TaxonomyError(f"Taxonomy is {taxonomy.max_depth()} levels deep; contract allows {max_levels}")
     lobs = build_lobs(lob_spec or load_config("lobs"))
     cat_spec = category_spec or load_config("spending_categories")
     categories = build_categories(cat_spec)
+    funding = build_funding_sources(funding_spec or load_config("funding_sources"))
+    datasets, default_ds = build_datasets(dataset_spec or load_config("datasets"))
     geography = build_geography(geography_spec or load_config("geography"))
     p = period_spec or load_config("periods")
     periods = Periods(p["history_start"], p["history_end"], p["base_year"], p["forecast_end"])
@@ -331,19 +393,35 @@ def build_metadata(
     for leaf in taxonomy.leaves():
         if leaf.lob and leaf.lob not in lobs.lobs:
             raise TaxonomyError(f"{leaf.id}: LOB {leaf.lob} not in LOB catalog")
+    targets = [c.target for c in categories.values()]
+    if len(targets) != len(set(targets)):
+        raise TaxonomyError("Each recipient leaf may be the target of only one claims category")
     for c in categories.values():
         if c.target not in taxonomy:
             raise TaxonomyError(f"Category {c.id}: unknown target {c.target}")
         tgt = taxonomy[c.target]
         if not tgt.is_leaf or not tgt.receives_flows:
             raise TaxonomyError(f"Category {c.id}: target {c.target} must be a flow-receiving leaf")
-        if c.service_unit and c.service_unit not in cat_spec.get("service_units", {}):
-            raise TaxonomyError(f"Category {c.id}: unknown service unit {c.service_unit}")
-        bad = set(c.reliable_lob_groups) - set(lobs.groups)
-        if bad:
-            raise TaxonomyError(f"Category {c.id}: unknown LOB groups {sorted(bad)}")
-    return Metadata(taxonomy, lobs, categories, dict(cat_spec.get("service_units", {})),
-                    geography, periods)
+    for leaf in taxonomy.leaves():
+        if leaf.receives_flows and leaf.id not in targets:
+            raise TaxonomyError(f"Recipient leaf {leaf.id} has no claims category")
+    for fs in funding.values():
+        if fs.basis not in ("population_pmpm", "lump_sum"):
+            raise TaxonomyError(f"Funding source {fs.id}: unknown basis {fs.basis}")
+        for anc in fs.targets_under:
+            if anc not in taxonomy:
+                raise TaxonomyError(f"Funding source {fs.id}: unknown target node {anc}")
+    if default_ds not in datasets:
+        raise TaxonomyError(f"Default dataset {default_ds} not defined")
+    for ds in datasets.values():
+        for n in ds.excluded_nodes:
+            if n not in taxonomy:
+                raise TaxonomyError(f"Dataset {ds.id}: unknown excluded node {n}")
+        for f in ds.funding_sources:
+            if f not in funding:
+                raise TaxonomyError(f"Dataset {ds.id}: unknown funding source {f}")
+    return Metadata(taxonomy, max_levels, lobs, categories, dict(cat_spec["instance_unit"]),
+                    funding, datasets, default_ds, geography, periods)
 
 
 _DEFAULT: Metadata | None = None

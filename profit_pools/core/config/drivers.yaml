@@ -2,100 +2,139 @@
 # applied and how. The scenario engine (Phase 4) and the assumption builder
 # both read this file; nothing about eligibility is hardcoded in the UI.
 #
-# applies_to.economics   economics types whose nodes may be scoped
-# applies_to.requires    extra data conditions (e.g. reliable service counts)
-# methods                pct   multiplicative % change      (value 0.05 = +5%)
-#                        pp    additive percentage points   (value 0.01 = +1 pp)
-#                        set   absolute override of the driver level
-#                        delta additive change in driver units
-# stage                  pipeline stage that consumes the driver (see ARCHITECTURE.md)
-schema_version: 1
+# scope_kind   what the assumption's taxonomy scope points at
+#   payer        a payer node (any level)            — cells: dataset × year × geo × payer leaf
+#   spending     a recipient node (any level), optionally restricted by payer LOB / LOB group
+#                and/or funding source               — cells: … × source × category
+#   recipient    a recipient node (any level)        — cells: dataset × year × state × leaf
+#   funding      a funding source (market only)      — cells: year × geo × source
+#   top_down     a top-down node (any level)         — cells: year × leaf (market only)
+# requires     data conditions; drivers are hidden where they are not met
+#   instances    the category carries service instances (never pharmacy)
+# methods      pct   multiplicative % change      (value 0.05 = +5%)
+#              pp    additive percentage points   (value 0.01 = +1 pp)
+#              set   absolute override of the driver level
+#              delta additive change in driver units
+# stage        pipeline stage that consumes the driver (ARCHITECTURE.md §5)
+# Every assumption may also be scoped to one dataset (MARKET / ENTERPRISE) or both.
+schema_version: 2
 
 drivers:
   enrollment:
     label: Enrollment
     unit: members_avg
     stage: 2
-    applies_to: {economics: [payer_pnl]}
+    scope_kind: payer
     methods: [pct, set, delta]
   enrollment_shift:
     label: Enrollment shift between segments
     unit: members_avg
     stage: 2
-    applies_to: {economics: [payer_pnl]}
-    methods: [delta]           # moves members from scope to a named target segment; sum-preserving
+    scope_kind: payer
+    methods: [delta, pct]
+    note: Moves members from the scoped segment to a named target segment or funding source; sum-preserving.
   premium_pmpm:
     label: Revenue PMPM
     unit: usd_pmpm
     stage: 3
-    applies_to: {economics: [payer_pnl]}
+    scope_kind: payer
     methods: [pct, set, delta]
   opex_pmpm:
     label: Residual operating expense PMPM
     unit: usd_pmpm
     stage: 3
-    applies_to: {economics: [payer_pnl]}
+    scope_kind: payer
     methods: [pct, set, delta]
+  opex_volume_scaling:
+    label: Residual opex volume scaling
+    unit: ratio
+    stage: 3
+    scope_kind: payer
+    methods: [set]
+    default: 1.0
+    user_estimate_only: true
+    note: >-
+      Share of baseline residual opex that varies with enrollment (1.0 = fully
+      per-member, the model default). The data provides no estimate; this is
+      offered only as a user-entered assumption.
   payer_margin:
     label: Payer operating margin
     unit: ratio
     stage: 3
-    applies_to: {economics: [payer_pnl]}
+    scope_kind: payer
     methods: [pp, set]
     note: Solved through residual opex PMPM; revenue and claims are unchanged.
   allowed_pmpm:
     label: Allowed spend PMPM
     unit: usd_pmpm
     stage: 4
-    applies_to: {economics: [margin_on_revenue], flow_kind: claims}
-    lob_scoped: true
+    scope_kind: spending
     methods: [pct]
   utilization:
-    label: Utilization (services per 1,000)
-    unit: count_annual
+    label: Utilization (instances per 1,000)
+    unit: instances_per_1000
     stage: 4
-    applies_to: {economics: [margin_on_revenue], flow_kind: claims, requires: [reliable_service_counts]}
-    lob_scoped: true
+    scope_kind: spending
+    requires: [instances]
     methods: [pct]
+    user_estimate_only: true
   unit_price:
-    label: Average allowed per service
-    unit: usd_per_service
+    label: Average allowed per instance
+    unit: usd_per_instance
     stage: 4
-    applies_to: {economics: [margin_on_revenue], flow_kind: claims, requires: [reliable_service_counts]}
-    lob_scoped: true
+    scope_kind: spending
+    requires: [instances]
     methods: [pct]
+  funding_population:
+    label: Uninsured / public-program population
+    unit: members_avg
+    stage: 2
+    scope_kind: funding
+    basis: population_pmpm
+    methods: [pct, set, delta]
+  funding_pmpm:
+    label: Uninsured / public-program PMPM
+    unit: usd_pmpm
+    stage: 4
+    scope_kind: spending
+    basis: population_pmpm
+    methods: [pct]
+  supplemental_payments:
+    label: Supplemental & state payments
+    unit: usd_annual
+    stage: 6
+    scope_kind: funding
+    basis: lump_sum
+    methods: [pct, set]
   provider_margin:
     label: Recipient operating margin
     unit: ratio
     stage: 7
-    applies_to: {economics: [margin_on_revenue]}
+    scope_kind: recipient
     methods: [pp, set]
     note: Never applied to payers; payer margin is a separate driver.
-  unattributed_revenue:
-    label: Unattributed revenue
-    unit: usd_annual
-    stage: 6
-    applies_to: {economics: [margin_on_revenue]}
-    methods: [pct]
   top_down_revenue:
     label: Top-down revenue
     unit: usd_annual
     stage: 8
-    applies_to: {economics: [top_down]}
+    scope_kind: top_down
     methods: [pct, set]
   top_down_margin:
     label: Top-down operating margin
     unit: ratio
     stage: 8
-    applies_to: {economics: [top_down]}
+    scope_kind: top_down
     methods: [pp, set]
 
-# Forecast-year growth drivers (annual rates). A CAGR entered here is an
-# INPUT; CAGRs shown in the UI are always computed from resulting values.
+# Forecast-year growth drivers (annual rates). A growth rate entered here is
+# an INPUT; CAGRs shown in the UI are always computed from resulting values.
+# Defaults live in baseline_forecast.yaml.
 growth_drivers:
-  enrollment_growth: {label: Enrollment growth, applies_to: [payer_pnl], stage: 1}
-  premium_trend: {label: Revenue PMPM trend, applies_to: [payer_pnl], stage: 1}
-  allowed_trend: {label: Allowed PMPM trend, applies_to: [margin_on_revenue], stage: 1}
-  opex_trend: {label: Residual opex PMPM trend, applies_to: [payer_pnl], stage: 1}
-  unattributed_growth: {label: Unattributed revenue growth, applies_to: [margin_on_revenue], stage: 1}
-  top_down_growth: {label: Top-down revenue growth, applies_to: [top_down], stage: 1}
+  enrollment_growth: {label: Enrollment growth, scope_kind: payer, stage: 1}
+  premium_trend: {label: Revenue PMPM trend, scope_kind: payer, stage: 1}
+  opex_trend: {label: Residual opex PMPM trend, scope_kind: payer, stage: 1}
+  utilization_trend: {label: Utilization trend, scope_kind: spending, stage: 1}
+  unit_cost_trend: {label: Unit cost trend, scope_kind: spending, stage: 1}
+  population_growth: {label: Uninsured / public population growth, scope_kind: funding, stage: 1}
+  supplemental_growth: {label: Supplemental payment growth, scope_kind: funding, stage: 1}
+  top_down_growth: {label: Top-down revenue growth, scope_kind: top_down, stage: 1}
