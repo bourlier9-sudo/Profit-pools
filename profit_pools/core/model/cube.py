@@ -143,6 +143,7 @@ class ForecastRates:
         self.meta = meta
         self.spec = spec or load_config("baseline_forecast")
         self._cache: dict[tuple[str, str], float] = {}
+        self._luts: dict[str, dict] = {}
 
     def _lookup(self, driver: str, keys: list[str | None]) -> float:
         table = self.spec[driver]
@@ -173,9 +174,10 @@ class ForecastRates:
 
     def __call__(self, driver: str, rows: pd.DataFrame, year: int) -> np.ndarray:
         """Rates for each row of a base-year frame (year-invariant in the baseline)."""
-        col = _RATE_KEY_COLUMN[driver]
-        keys = rows[col]
-        lut = {k: self.rate(driver, k) for k in keys.unique()}     # few distinct keys, many rows
+        keys = rows[_RATE_KEY_COLUMN[driver]]
+        lut = self._luts.setdefault(driver, {})                    # few distinct keys, many rows and years
+        for k in set(keys.unique()) - lut.keys():
+            lut[k] = self.rate(driver, k)
         return keys.map(lut).to_numpy(dtype=float)
 
 

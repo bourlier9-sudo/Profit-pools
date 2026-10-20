@@ -14,6 +14,7 @@ Status legend: ✅ done · 🔄 in progress · ⏳ planned
 | 6 | Growth and CAGR section, indexed growth, revenue-growth drivers, YoY heatmap. Guided assumption builder, Impact-only view, pool groupings | ✅ |
 | 7 | Exports: CSV, scenario JSON import/export, HTML snapshot, PPTX | ✅ |
 | 8 | Visual polish at 1440px, responsiveness, performance, end-to-end consistency tests | ✅ |
+| 9 | Gain bridge rethink, Sankey levels + enterprise dollar, where to play, scenario library and comparison, data dictionary, guided tour, cleaner PPTX | ✅ |
 
 ---
 
@@ -290,6 +291,36 @@ funding sources (group "Government-managed (FFS)"), replaces the single "traditi
 * One scenario changes the Marimekko, Sankey, KPIs, growth and exports consistently (tested).
 * Cold start under 3 seconds.
 
+## Phase 9: analyst experience ✅
+
+**Deliverables:**
+* **Growth bridge rebuilt** (`growth.bridge`): overall = operating gain by economic driver (additive, no
+  double counting); "Bridge for" picks one pool with economics-specific detail (plans: enrollment, premium,
+  medical and admin cost; providers & pharmacy: people, utilization, price, spend per person, supplemental,
+  margin; top-down: growth by sub-pool + margin). Uninsured / FFS are no longer lines: every inflow decomposes
+  by people × services × price via the new `flows.people` column. Revenue available for single pools.
+* **Sankey**: Expand pools tree (level by level, fold removes descendants) and Expand / Fold buttons in the
+  inspector; Arrange nodes (order + pins, explicit positions); **Enterprise dollar** mode
+  (`enterprise_flow.py`) — premiums → outside providers / owned assets / admin / plan gain; owned assets +
+  members' cost sharing + other payers → costs / gain; all gain → total enterprise operating gain; loss-makers
+  via a Losses node; "Operating gain only" focus. Owned assets now only operate in states with enterprise plans.
+* **Where to play** bubble chart (growth vs margin, size = gain, averages, baseline→scenario arrows).
+* **Scenario library** (session, seeded with three fictional examples, applied scenarios saved automatically,
+  JSON download/upload) and **Compare scenarios** section (up to three vs baseline).
+* **Data dictionary** page (glossary.yaml + config + contracts; coverage matrix; ZIP download).
+* **Guided tour** (spotlight, 14 steps, auto-start once, replay from the sidebar, scroll script).
+* **PPTX**: optional user template (in memory, fitted titles, sample slides dropped, any slide size);
+  generated headlines; executive summary; where profit moves (two Marimekkos); where to play (native bubble);
+  "Other" folding and fit-aware labels; notes slide. HTML snapshot uses the same headlines.
+* Status badges use Streamlit badges and Material icons instead of emoji.
+* **619 tests total.**
+
+**Acceptance (met):**
+* Bridges reconcile exactly for every node, dataset and geography, gain and revenue; overall = Σ layers.
+* Enterprise flow balances at every node and nets to the Value capture consolidated gain.
+* Every export and the template path parse back; screenshots reviewed at 1440 and 1024 (tour, Sankey modes,
+  where to play, comparison, dictionary, slides rendered through LibreOffice).
+
 ---
 
 ## Decision log
@@ -319,4 +350,7 @@ funding sources (group "Government-managed (FFS)"), replaces the single "traditi
 | 2026-10-20 | **Decided (user):** the standard taxonomy follows the public industry profit-pool framework (sector → sub-pools); all values stay fictional. |
 | 2026-10-20 | Ownership: routing moves enterprise members' care to owned assets inside the same pool, so spending and pool revenue never change; only who keeps the gain does. Owned margin = market margin + an asset offset, adjustable only by its own driver. |
 | 2026-10-20 | Exports live outside `core` (they use chart builders) and are generated on click. |
+| 2026-10-20 | **Decided (user):** the growth waterfall is overall first, then per pool, because detail differs by pool (HST vs payer). Overall uses operating gain (additive). |
+| 2026-10-20 | **Decided (user):** guided tour with a scroll script; scenario library and side-by-side comparison; where-to-play chart. think-cell export tabled. |
+| 2026-10-20 | Insourced gain reaches the Sankey through a separate "Enterprise dollar" flow (one currency: enterprise dollars), not as gain nodes on the spending Sankey. |
 | 2026-10-20 | Impact-only "one assumption on its own" runs that assumption alone against the baseline (standalone effect). The sequential bridge remains the attribution that sums to the full scenario. |

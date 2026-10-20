@@ -190,3 +190,35 @@ def _assumption_from(a: dict[str, Any]) -> Assumption:
                       phase_in=bool(a.get("phase_in", False)), origin=a.get("origin"),
                       label=str(a.get("label", "")), notes=str(a.get("notes", "")),
                       id=str(a.get("id") or uuid.uuid4().hex[:8]))
+
+
+LIBRARY_SCHEMA_VERSION = 1
+
+
+def library_to_json(scenarios: list[Scenario]) -> str:
+    """A scenario library file: configuration only (no data, no credentials)."""
+    return json.dumps({"schema_version": LIBRARY_SCHEMA_VERSION,
+                       "scenarios": [s.to_dict() for s in scenarios]}, indent=2)
+
+
+def library_from_json(text: str) -> list[Scenario]:
+    """Accepts a library file or a single scenario file; validates every scenario."""
+    try:
+        d = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ScenarioFormatError([f"Not valid JSON: {e.msg} (line {e.lineno})"]) from None
+    if isinstance(d, dict) and "assumptions" in d:
+        return [Scenario.from_dict(d)]
+    if not isinstance(d, dict) or d.get("schema_version") != LIBRARY_SCHEMA_VERSION or not isinstance(
+            d.get("scenarios"), list):
+        raise ScenarioFormatError([f"Not a scenario library (schema_version {LIBRARY_SCHEMA_VERSION} with a "
+                                   f"'scenarios' list) or a single scenario."])
+    out, problems = [], []
+    for i, s in enumerate(d["scenarios"], start=1):
+        try:
+            out.append(Scenario.from_dict(s))
+        except ScenarioFormatError as e:
+            problems += [f"Scenario {i}: {p}" for p in e.problems]
+    if problems:
+        raise ScenarioFormatError(problems)
+    return out

@@ -1,0 +1,39 @@
+# Plain-language glossary for the Data dictionary page. Definitions mirror the engine (ARCHITECTURE.md).
+schema_version: 1
+terms:
+  - term: Profit pool
+    definition: A sector or sub-sector of the healthcare economy, sized by its revenue and operating gain.
+  - term: Operating gain
+    definition: Revenue minus operating costs. Additive across pools, so it can be summed for the whole economy.
+  - term: Operating margin
+    definition: Operating gain ÷ revenue, over the revenue that has margin data. Never averaged across pools.
+  - term: Gross sector revenue
+    definition: The sum of every pool's revenue. It counts the same dollar more than once (a plan's claims are a provider's revenue), so use operating gain to compare totals.
+  - term: Allowed spend
+    definition: Everything a provider or pharmacy receives for a service — the plan's payment plus the member's share.
+  - term: Paid (payer-paid)
+    definition: The part of allowed spend paid by the plan or public program. It is the plan's claims expense.
+  - term: Consumer spend
+    definition: Allowed minus paid — member cost sharing and self-pay (the uninsured are all self-pay).
+  - term: PMPM
+    definition: Per member per month. Annual amount ÷ (average members × 12).
+  - term: Medical loss ratio (MLR)
+    definition: A plan's paid claims ÷ its premium revenue.
+  - term: Residual operating expense
+    definition: A plan's premium minus paid claims minus operating gain — admin and other costs. Its PMPM is held constant in scenarios.
+  - term: Service instances
+    definition: A single count of services (visits, admissions, procedures) for provider categories that report it. Never used for pharmacy.
+  - term: Top-down estimate
+    definition: A pool sized nationally (revenue and margin only) with no plan, geography or flow detail — manufacturers, health services & technology and PBM services.
+  - term: Funding source
+    definition: Money reaching providers from outside the plans — the uninsured, government-managed fee-for-service (Medicare FFS, Medicaid FFS) and supplemental program payments.
+  - term: Owned asset
+    definition: A care-delivery business the enterprise owns inside a provider or pharmacy pool (fictional, ownership.yaml).
+  - term: Routing (insourcing)
+    definition: The share of the enterprise's own members' care delivered by its owned assets. It changes who keeps the gain, not how much is spent.
+  - term: Consolidated gain
+    definition: Plan operating gain plus owned-asset gain. Claims a plan pays its own assets are eliminated from consolidated revenue and expense.
+  - term: Scenario
+    definition: An ordered list of assumptions on drivers (enrollment, prices, margins, growth). Every chart reads the same engine run.
+  - term: Pool grouping
+    definition: A user overlay on the standard taxonomy (rename, move, add groups). It changes roll-ups, never values.

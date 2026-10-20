@@ -205,9 +205,35 @@ Negative numbers use a true minus (−), not a hyphen. Unavailable values render
 * A forecast band covers the forecast years.
 
 ### Growth bridge (waterfall)
-* Horizontal: start revenue → one bar per growth driver → end revenue, so labels stay readable.
+* Horizontal: start total → one bar per economic driver → end total, so labels stay readable.
+* Overall (all pools) is operating gain only, because gain is additive. "Bridge for" switches to one pool, whose
+  detail follows its economics (plans, providers & pharmacy, top-down pools by sub-pool); a single pool may
+  also show revenue.
 * Increases teal, decreases red, totals `--ink-3`. The value axis is labelled and may start above 0.
 * The assumption attribution (scenario vs baseline) stays a table in Section B.
+
+### Where to play (attractiveness)
+* x = revenue CAGR, y = operating margin, bubble area ∝ operating gain; dashed lines at the revenue-weighted
+  averages; losses are hollow red rings. Sector colors at the layer level; dotted lines from baseline to
+  scenario positions when comparing. Never two y-axes.
+
+### Scenario comparison
+* Scenario identity colors follow the categorical palette in library order; the baseline is `--ink-3` and
+  dashed. Grouped horizontal bars for Δ by pool; lines over time with the forecast band.
+
+### Enterprise dollar (Sankey)
+* Plans payer blue, owned assets the accent, outside costs `--line-strong`, enterprise gain the darkest teal,
+  losses `--bad`. Links take the color of what they are (claims, cost, gain, loss).
+* "Operating gain only" shows contributors → enterprise gain and loss-makers → Losses, on the same totals.
+* Node order: Automatic, Largest first, Hierarchy order or A–Z, plus "pin to top"; applied via explicit node
+  positions so it survives reruns. Dragging in the browser is temporary.
+
+### Guided tour
+* Spotlight: the target keeps its colors above a 55% ink dim, outlined 4 px in the accent; the step card is
+  fixed bottom-right (centered for the welcome and closing steps), 380 px, hairline border, Back / Next /
+  Skip. The sticky global bar flattens and the sidebar dims during the tour.
+* Targets are Streamlit `st-key-*` classes; a same-origin script scrolls each into view and remembers in the
+  browser that the tour was seen. Without the script the tour still works (no auto-scroll).
 
 ### Indexed growth and YoY heatmap
 * Indexed lines rebased to 100, a hairline at 100, faint baseline lines when a scenario is active.
@@ -219,8 +245,15 @@ Negative numbers use a true minus (−), not a hyphen. Unavailable values render
   parentheses). No new colours.
 
 ### PPTX
-* 13.33 × 7.5 in. Title 22 pt, subtitle 11 pt `--ink-3`, hairline rule, fictional-data footer on every slide.
-* Marimekko tiles are native rectangles using `tile_fill()`; missing margin uses a native diagonal pattern.
+* 13.33 × 7.5 in reference canvas, scaled to the template's slide size. Title 20 pt (or the template's title
+  style, fitted to the title band), subtitle 11 pt `--ink-3`, hairline rule, source line on every slide.
+* One idea per slide, each titled with a generated headline (export/headlines.py); the executive summary
+  repeats the headlines under the KPIs.
+* Marimekko tiles are native rectangles using `tile_fill()`; missing margin uses a native diagonal pattern;
+  segments below 3% of a column fold into "Other"; labels only where they fit (≥ 0.75 in wide, ≥ 0.3 in tall);
+  column name, share and total above each column; a compact margin legend below.
+* Native charts: line (trend), clustered bar with category labels on the low side (growth drivers), bubble
+  (where to play). No gridlines on bars; light gridlines on lines.
 
 ### Impact-only view
 * Unaffected tiles: `--line` fill, "no change" in `--ink-3`.

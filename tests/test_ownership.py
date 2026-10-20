@@ -72,7 +72,7 @@ def test_enterprise_spend_matches_flows(base):
         assert v == pytest.approx(ff["amount"].sum())
 
 
-@pytest.mark.parametrize("geo", ["US", "NVL", "WMR"])
+@pytest.mark.parametrize("geo", ["US", "NVL", "SRG"])
 def test_consolidation_identities(m, base, geo):
     v = ownership_view(base, m, Y, Geo.parse(m, geo))
     t = v.totals
@@ -126,3 +126,15 @@ def test_spending_assumption_flows_into_owned_assets(m, hist, base):
 def test_ownership_validation(m, hist, bad, code):
     r = run_scenario(hist, m, Scenario("t", (bad,)))
     assert code in {i.code for i in r.issues if i.level == "error"}
+
+
+def test_assets_operate_only_where_enterprise_has_plans(m, base):
+    p = base.pools
+    states = set(p.loc[(p["dataset"] == "ENTERPRISE") & p["members"].notna(), "state"])
+    for a in O.assets(m):
+        assert set(a.states) <= states, a.id
+
+
+def test_state_without_enterprise_plans_is_a_note(m, base):
+    v = ownership_view(base, m, Y, Geo.parse(m, "WMR"))
+    assert v.note and v.assets.empty

@@ -197,7 +197,7 @@ def open_editor(meta: Metadata) -> None:
     if msg:
         (st.success if msg[0] == "ok" else st.error)(msg[1])
     for w in warnings:
-        st.caption("⚠ " + w)
+        st.caption(":material/info: " + w)
 
     st.divider()
     applied = ss[S.K_GROUPING]

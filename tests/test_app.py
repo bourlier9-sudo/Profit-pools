@@ -240,7 +240,7 @@ def test_growth_section_renders(app, span, metric, focus):
     app.run()
     _ok(app)
     md = " ".join(m.value for m in app.markdown)
-    assert "Compound annual growth" in md and f"What drives revenue growth, {span[0]}→{span[1]}" in md
+    assert "Compound annual growth" in md and f"What drives operating gain, {span[0]}→{span[1]}" in md
 
 
 @pytest.mark.parametrize("view", ["baseline", "compare"])
@@ -283,3 +283,117 @@ def test_export_menu(app, example, scenario):
             "HTML snapshot", "PowerPoint summary"} <= set(labels)
     js = next(d for d in dl if d.proto.label == "Scenario JSON")
     assert js.proto.disabled == (not scenario)      # no dead control: disabled with a reason
+
+
+@pytest.mark.parametrize("target, metric", [("PAYER", "gain"), ("PROVIDER", "revenue"), ("HEALTH_SERVICES", "gain"),
+                                            ("PHARMACY", "revenue")])
+def test_growth_bridge_per_pool(app, target, metric):
+    app.session_state[S.K_APPLIED] = None
+    app.session_state[S.K_VIEW] = "baseline"
+    app.session_state[S.K_DATASET] = "MARKET"
+    app.session_state[S.K_FOCUS] = None
+    app.session_state[S.K_SELECTED] = None
+    app.session_state["pp.growth.from"], app.session_state["pp.growth.to"] = 2025, 2031
+    app.run()                                    # redraw "Bridge for" with the all-pools options first
+    app.session_state["pp.growth.bridge_node"] = target
+    app.session_state["pp.growth.bridge_metric"] = metric
+    app.run()
+    _ok(app)
+    md = " ".join(m.value for m in app.markdown)
+    word = "operating gain" if metric == "gain" else "revenue"
+    assert f"What drives {word}, 2025→2031" in md
+    app.session_state["pp.growth.bridge_node"] = "__scope__"
+    app.run()
+    _ok(app)
+    assert app.session_state["pp.growth.bridge_metric"] == "gain"        # overall is gain-only (additive)
+
+
+def _flows_reset(app, dataset="MARKET"):
+    for k, v in {S.K_APPLIED: None, S.K_VIEW: "baseline", S.K_DATASET: dataset, S.K_GEO: "US", S.K_FOCUS: None,
+                 S.K_SELECTED: None, "pp.sk.mode": "spend", "pp.sk.expand": [], "pp.sk.depth": 1,
+                 "pp.sk.order": "auto", "pp.sk.pins": [], "pp.sk.sel": None, "pp.sk.show": "chart"}.items():
+        app.session_state[k] = v
+
+
+def test_sankey_expand_tree_and_fold(app):
+    _flows_reset(app)
+    app.run()
+    _ok(app)
+    boxes = [c for c in app.checkbox if c.key and c.key.startswith("pp.sk.x.")]
+    assert "pp.sk.x.PRV_HOSP" in {c.key for c in boxes} and "pp.sk.x.PRV_HOSP_ACUTE" not in {c.key for c in boxes}
+    app.checkbox(key="pp.sk.x.PRV_HOSP").check().run()
+    _ok(app)
+    assert app.session_state["pp.sk.expand"] == ["PRV_HOSP"]
+    assert "pp.sk.x.PRV_HOSP_ACUTE" in {c.key for c in app.checkbox}        # the next level appears
+    app.checkbox(key="pp.sk.x.PRV_HOSP_ACUTE").check().run()
+    app.checkbox(key="pp.sk.x.PRV_HOSP").uncheck().run()                      # folding removes descendants
+    _ok(app)
+    assert app.session_state["pp.sk.expand"] == []
+
+
+def test_sankey_inspector_expand_buttons(app):
+    _flows_reset(app)
+    app.session_state["pp.sk.sel"] = ("node", "recipient:PRV_HOSP")
+    app.run()
+    _ok(app)
+    app.button(key="pp.sk.open").click().run()
+    _ok(app)
+    assert "PRV_HOSP" in app.session_state["pp.sk.expand"]
+    app.session_state["pp.sk.sel"] = ("node", "recipient:PRV_HOSP_ACUTE")
+    app.run()
+    app.button(key="pp.sk.fold").click().run()
+    _ok(app)
+    assert app.session_state["pp.sk.expand"] == []
+
+
+@pytest.mark.parametrize("order", ["size", "hierarchy", "name"])
+def test_sankey_arrange(app, order):
+    _flows_reset(app)
+    app.session_state["pp.sk.order"] = order
+    app.session_state["pp.sk.pins"] = ["recipient:RX_DISP"]
+    app.run()
+    _ok(app)
+
+
+@pytest.mark.parametrize("detail", ["group", "plan"])
+@pytest.mark.parametrize("view", ["baseline", "compare"])
+@pytest.mark.parametrize("show", ["chart", "table"])
+def test_sankey_enterprise_dollar(app, example, detail, view, show):
+    _flows_reset(app, "ENTERPRISE")
+    app.run()
+    app.session_state[S.K_APPLIED] = example if view == "compare" else None
+    app.session_state[S.K_VIEW] = view
+    app.session_state["pp.sk.mode"] = "enterprise"
+    app.session_state["pp.sk.ent_detail"] = detail
+    app.session_state["pp.sk.ent_focus"] = "gain" if detail == "plan" else "pnl"
+    app.session_state["pp.sk.show"] = show
+    app.run()
+    _ok(app)
+    md = " ".join(m.value for m in app.markdown)
+    assert "enterprise operating gain" in md and "Same totals as Value capture" in md
+    _flows_reset(app)
+    app.run()
+    assert app.session_state["pp.sk.mode"] == "spend"                   # market has no enterprise-dollar view
+
+
+@pytest.mark.parametrize("dataset", ["MARKET", "ENTERPRISE"])
+@pytest.mark.parametrize("pick", [0, 1, 3])
+def test_compare_section(app, dataset, pick):
+    app.session_state[S.K_APPLIED] = None
+    app.session_state[S.K_VIEW] = "baseline"
+    app.session_state[S.K_DATASET] = dataset
+    app.session_state[S.K_GEO] = "US"
+    app.session_state[S.K_FOCUS] = None
+    app.session_state[S.K_SELECTED] = None
+    app.session_state[S.K_YEAR] = 2029
+    app.run()
+    names = [s.name for s in app.session_state[S.K_LIBRARY]][:pick]
+    app.session_state[S.K_COMPARE] = names
+    app.run()
+    _ok(app)
+    md = " ".join(m.value for m in app.markdown)
+    assert "Compare scenarios" in md
+    if pick:
+        assert all(n in md for n in names) and "Δ gain" in md
+        assert ("Consolidated gain" in md) == (dataset == "ENTERPRISE")
+    app.session_state[S.K_DATASET] = "MARKET"

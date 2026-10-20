@@ -12,7 +12,7 @@ from profit_pools.design.tokens import COLOR, MARGIN_MAX, MARGIN_MIN, MARGIN_STO
 
 
 def bridge(df: pd.DataFrame) -> go.Figure:
-    """`df` from growth.revenue_bridge: start total, signed components, end total. Horizontal, so the
+    """`df` from growth.bridge: start total, signed components, end total. Horizontal, so the
     component names stay readable; the value axis starts near the smaller total (labelled), not at 0."""
     measure = ["absolute" if k == "total" else "relative" for k in df["kind"]]
     measure[-1] = "total"
@@ -52,4 +52,42 @@ def yoy_heatmap(m: pd.DataFrame, base_year: int) -> go.Figure:
                       xaxis=dict(tickvals=years, ticktext=[f"{y}{' f' if y > base_year else ''}" for y in years],
                                  fixedrange=True, showgrid=False),
                       yaxis=dict(autorange="reversed", fixedrange=True, automargin=True, showgrid=False))
+    return fig
+
+
+def attractiveness(df: pd.DataFrame, colors: dict[str, str], base: pd.DataFrame | None = None,
+                   height: int = 440) -> go.Figure:
+    """Growth (x) vs margin (y), bubble area ∝ operating gain; dashed lines at the revenue-weighted averages.
+    Negative gain is drawn as a hollow red ring (area ∝ |gain|). `base`: baseline positions, joined by a line."""
+    d = df[df["cagr"].notna() & df["margin"].notna()]
+    fig = go.Figure()
+    if d.empty:
+        return fig
+    mx = float(d["gain"].abs().max()) or 1.0
+    size = 12 + 48 * np.sqrt(d["gain"].abs() / mx)
+    if base is not None:
+        b = base.set_index("node_id").reindex(d["node_id"])
+        for (_, r), (_, q) in zip(d.iterrows(), b.iterrows()):
+            if pd.notna(q["cagr"]) and pd.notna(q["margin"]):
+                fig.add_trace(go.Scatter(x=[q["cagr"], r["cagr"]], y=[q["margin"], r["margin"]], mode="lines",
+                                         line=dict(color=COLOR["line_strong"], width=1.5, dash="dot"),
+                                         hoverinfo="skip", showlegend=False))
+    neg = d["gain"] < 0
+    fill = [colors.get(n, COLOR["ink_3"]) for n in d["node_id"]]
+    hover = [f"<b>{r.label}</b><br>Revenue CAGR {fmt.pct(r.cagr, 1)} · margin {fmt.pct(r.margin)}<br>"
+             f"Operating gain {fmt.money(r.gain)} · revenue {fmt.money(r.revenue)}" for r in d.itertuples()]
+    fig.add_trace(go.Scatter(
+        x=d["cagr"], y=d["margin"], mode="markers+text", text=d["label"], textposition="top center",
+        textfont=dict(size=11, color=COLOR["ink_2"]), hovertext=hover, hovertemplate="%{hovertext}<extra></extra>",
+        marker=dict(size=size, color=[("rgba(0,0,0,0)" if n else c) for n, c in zip(neg, fill)], opacity=0.85,
+                    line=dict(width=[2 if n else 1 for n in neg],
+                              color=[COLOR["bad"] if n else COLOR["surface"] for n in neg])),
+        showlegend=False))
+    for v, axis in ((df.attrs.get("avg_growth"), "x"), (df.attrs.get("avg_margin"), "y")):
+        if v is not None and np.isfinite(v):
+            (fig.add_vline if axis == "x" else fig.add_hline)(v, line=dict(color=COLOR["ink_3"], width=1, dash="dash"))
+    fig.add_hline(0, line=dict(color=COLOR["line_strong"], width=1))
+    fig.update_layout(template=TEMPLATE_NAME, height=height, margin=dict(t=16, r=16, b=44, l=56),
+                      xaxis=dict(tickformat=".0%", title="Revenue growth (CAGR)", fixedrange=True, zeroline=False),
+                      yaxis=dict(tickformat=".0%", title="Operating margin", fixedrange=True, zeroline=False))
     return fig

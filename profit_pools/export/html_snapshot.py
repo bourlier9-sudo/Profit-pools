@@ -14,6 +14,7 @@ from profit_pools.design import format as fmt
 from profit_pools.design.tokens import COLOR, FONT_FAMILY
 from profit_pools.export import FICTIONAL, ExportContext
 from profit_pools.export import figures as F
+from profit_pools.export import headlines as HL
 from profit_pools.export.csv_export import analysis_frame
 
 CSS = f"""
@@ -67,7 +68,7 @@ def build(ctx: ExportContext) -> str:
         parts.append("<div class='kpis'>" + "".join(
             f"<div class='kpi'><div class='l'>{escape(l)}</div><div class='v'>{escape(v)}</div>"
             f"<div class='d'>{escape(d)}</div></div>" for l, v, d in k) + "</div>")
-    parts.append("<h2>Profit pools</h2><p class='note'>Column width = share of revenue; tile height = share "
+    parts.append(f"<h2>{escape(HL.mekko(ctx))}</h2><p class='note'>Column width = share of revenue; tile height = share "
                  "within the column; color = operating margin (red below 0%, teal above)"
                  + (", or the change versus baseline in the impact view" if ctx.view == "impact" else "")
                  + ". Hatched tiles have no margin data.</p>")
@@ -76,7 +77,8 @@ def build(ctx: ExportContext) -> str:
     parts.append("<h2>Value flows</h2><p class='note'>Allowed spending from payers and other funders to "
                  "providers and pharmacy. Top-down pools have no flows.</p>" + fig_html(F.sankey_fig(ctx)))
     p = ctx.meta.periods
-    parts.append(f"<h2>What drives revenue growth, {p.base_year}–{p.forecast_end}</h2>" + fig_html(F.growth_fig(ctx)))
+    parts.append(f"<h2>{escape(HL.bridge(F.growth_bridge(ctx)))}</h2><p class='note'>Operating gain, "
+                 f"{p.base_year}–{p.forecast_end}</p>" + fig_html(F.growth_fig(ctx)))
     parts.append("<h2>Year-over-year growth</h2>" + fig_html(F.yoy_fig(ctx)))
 
     a = analysis_frame(ctx)

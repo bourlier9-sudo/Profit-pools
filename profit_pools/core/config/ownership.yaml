@@ -27,7 +27,7 @@ assets:
   - id: OWN_PRIMARY
     label: Owned primary care clinics
     node_id: PRV_PHYS_PRIMARY
-    states: [NVL, ESH, SRG, WMR, CLP, LKD]
+    states: [NVL, ESH, SRG, CLP, LKD]
     routing_share: 0.18
     margin_offset: -0.010
     third_party_ratio: 0.35
@@ -41,14 +41,14 @@ assets:
   - id: OWN_HOME_HEALTH
     label: Owned home health agency
     node_id: PRV_PAC_HH
-    states: [SRG, WMR, LKD]
+    states: [SRG, CLP, LKD]
     routing_share: 0.22
     margin_offset: 0.015
     third_party_ratio: 0.60
   - id: OWN_MAIL_RX
     label: Owned mail-order pharmacy
     node_id: RX_MAIL
-    states: [NVL, ESH, SRG, WMR, CLP, LKD]
+    states: [NVL, ESH, SRG, CLP, LKD]
     routing_share: 0.55
     margin_offset: 0.005
     third_party_ratio: 0.15

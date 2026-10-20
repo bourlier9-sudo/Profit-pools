@@ -90,22 +90,64 @@ def test_html_snapshot_is_self_contained(setup, view, dataset, geo):
         assert "Consolidated gain" in html
 
 
+def _titles(prs):
+    out = []
+    for sl in prs.slides:
+        texts = [sh.text_frame.text for sh in sl.shapes if sh.has_text_frame and sh.text_frame.text]
+        out.append(texts[0] if texts else "")
+    return out
+
+
 @pytest.mark.skipif(not pptx_summary.available(), reason="python-pptx not installed")
 @pytest.mark.parametrize("view, dataset, focus", [("compare", "MARKET", None), ("baseline", "ENTERPRISE", None),
                                                   ("impact", "MARKET", "PROVIDER")])
 def test_pptx_opens_with_native_marimekko(setup, view, dataset, focus):
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
+    from profit_pools.export import headlines as HL
     ctx = ctx_for(setup, view, dataset, focus=focus)
     prs = Presentation(io.BytesIO(pptx_summary.build(ctx)))
-    slides = list(prs.slides)
-    tiles = F.tiles(ctx)[0]
-    rects = [s for s in slides[1].shapes if s.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE]
-    assert len(rects) == len(tiles)                           # one native shape per Marimekko tile
-    charts = [s for sl in slides for s in sl.shapes if s.has_chart]
+    titles = _titles(prs)
+    assert titles[1] == "Executive summary"
+    mekko = list(prs.slides)[titles.index(HL.mekko(ctx))]
+    rects = [s for s in mekko.shapes if s.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE]
+    tiles = pptx_summary._fold(F.tiles(ctx)[0])
+    legend = 0 if view == "impact" else 6
+    assert len(rects) == len(tiles) + legend                   # one native shape per (folded) Marimekko tile
+    charts = [s for sl in prs.slides for s in sl.shapes if s.has_chart]
     assert len(charts) >= 2
-    text = " ".join(sh.text_frame.text for sl in slides for sh in sl.shapes if sh.has_text_frame)
+    text = " ".join(sh.text_frame.text for sl in prs.slides for sh in sl.shapes if sh.has_text_frame)
     assert FICTIONAL in text
-    titles = [sl.shapes[0].text_frame.text for sl in slides[1:]]
-    assert ("Value capture: owned assets and the consolidated P&L" in titles) == (dataset == "ENTERPRISE")
-    assert any(t.startswith("Scenario:") for t in titles) == (view != "baseline")
+    assert any(t.startswith("Owned assets add") for t in titles) == (dataset == "ENTERPRISE")
+    assert any(ctx.scenario is not None and t.startswith(ctx.scenario.name) for t in titles) == (view != "baseline")
+    summary = " ".join(sh.text_frame.text for sh in list(prs.slides)[1].shapes if sh.has_text_frame)
+    for t in titles[2:-1]:
+        assert t in summary                                   # the executive summary lists every headline
+
+
+def test_fold_keeps_column_totals(setup):
+    ctx = ctx_for(setup, "baseline")
+    rows = F.tiles(ctx)[0]
+    folded = pptx_summary._fold(rows)
+    assert np.allclose(folded.groupby("col_id")["revenue"].sum(), rows.groupby("col_id")["revenue"].sum())
+    assert np.allclose(folded.groupby("col_id")["share_in_col"].sum(), 1.0)
+
+
+@pytest.mark.skipif(not pptx_summary.available(), reason="python-pptx not installed")
+def test_pptx_uses_a_template(setup):
+    from pptx import Presentation
+    from pptx.util import Inches
+    t = Presentation()
+    t.slide_width, t.slide_height = Inches(10), Inches(7.5)           # 4:3 template with a sample slide
+    t.slides.add_slide(t.slide_layouts[0]).shapes.title.text = "SAMPLE"
+    buf = io.BytesIO()
+    t.save(buf)
+    assert pptx_summary.check_template(buf.getvalue()) is None
+    assert pptx_summary.check_template(b"not a pptx")
+    ctx = ctx_for(setup, "compare")
+    plain = Presentation(io.BytesIO(pptx_summary.build(ctx)))
+    tpl = Presentation(io.BytesIO(pptx_summary.build(ctx, buf.getvalue())))
+    assert len(tpl.slides) == len(plain.slides)                   # sample slide removed
+    assert tpl.slide_width == Inches(10)                           # template size kept
+    assert "SAMPLE" not in " ".join(sh.text_frame.text for sl in tpl.slides for sh in sl.shapes if sh.has_text_frame)
+    assert list(tpl.slides)[2].shapes.title.text == _titles(plain)[2]    # headline in the template's title box

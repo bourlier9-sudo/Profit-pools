@@ -22,6 +22,7 @@ class ModuleSpec:
 
 
 def modules() -> list[ModuleSpec]:
+    from profit_pools.modules.data_dictionary.page import render as render_dictionary
     from profit_pools.modules.profit_pools.page import render as render_profit_pools
 
     return [
@@ -32,5 +33,13 @@ def modules() -> list[ModuleSpec]:
             description="Revenue, operating gain and spending flows across a fictional healthcare economy.",
             render=render_profit_pools,
             url_path="profit-pools",
+        ),
+        ModuleSpec(
+            id="data_dictionary",
+            title="Data dictionary",
+            icon=":material/menu_book:",
+            description="Definitions, pools, scenario levers, data tables and coverage.",
+            render=render_dictionary,
+            url_path="data-dictionary",
         ),
     ]

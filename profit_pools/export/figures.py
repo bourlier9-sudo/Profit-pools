@@ -118,8 +118,11 @@ def sankey_fig(ctx: ExportContext) -> go.Figure | None:
 
 
 def growth_bridge(ctx: ExportContext) -> pd.DataFrame:
+    """Operating-gain bridge for the current scope (additive across sectors), base year → forecast end."""
     p = ctx.meta.periods
-    return G.revenue_bridge(ctx.result, ctx.meta, ctx.dataset, ctx.focus, ctx.geo, p.base_year, p.forecast_end)
+    kind = G.bridge_kind(ctx.meta, ctx.dataset, ctx.focus)
+    return G.bridge(ctx.result, ctx.meta, ctx.dataset, ctx.focus, ctx.geo, p.base_year, p.forecast_end, "gain",
+                    by_child=kind == "top_down")
 
 
 def growth_fig(ctx: ExportContext) -> go.Figure:

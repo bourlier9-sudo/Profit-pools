@@ -36,7 +36,7 @@ POOL_COLUMNS = [
 ]
 FLOW_COLUMNS = [
     "dataset", "year", "is_forecast", "state", "county", "source_id", "source_kind", "flow_kind",
-    "lob", "category", "target_id", "amount", "paid", "consumer", "instances", "margin", "gain",
+    "lob", "category", "target_id", "amount", "paid", "consumer", "instances", "people", "margin", "gain",
 ]
 
 
@@ -86,9 +86,10 @@ def run(cube: DriverCube, meta: Metadata, scenario_id: str | None = None) -> Mod
     spend["amount"] = spend["allowed_pmpm"] * spend["denom"] * 12
     spend["paid"] = spend["amount"] * spend["paid_ratio"]
     spend["instances"] = spend["inst_per_member"] * spend["denom"]
+    spend["people"] = spend["denom"]          # members (payer flows) or population (funding flows) behind the flow
     spend["flow_kind"] = np.where(spend["source_kind"] == "payer", "payer_claims", "funding_pmpm")
     supp = cube.supplemental.assign(county=None, source_kind="funding", flow_kind="supplemental",
-                                    lob=None, category=None, instances=np.nan,
+                                    lob=None, category=None, instances=np.nan, people=np.nan,
                                     paid=cube.supplemental["amount"])
     flows = pd.concat([spend.drop(columns=["denom", "allowed_pmpm", "paid_ratio", "inst_per_member"]), supp],
                       ignore_index=True)
@@ -155,7 +156,7 @@ def run(cube: DriverCube, meta: Metadata, scenario_id: str | None = None) -> Mod
 
     # Stage 9 — assemble.
     pools = pd.concat([payer_rows, rec_rows, td_rows], ignore_index=True)
-    pools["layer_id"] = pools["node_id"].map(lambda i: tax[i].layer_id)
+    pools["layer_id"] = pools["node_id"].map({n.id: n.layer_id for n in tax})
     pools["is_forecast"] = pools["year"] > base_year
     pools["county"] = pools["county"].where(pools["county"].notna(), None)
     pools = pools[POOL_COLUMNS]

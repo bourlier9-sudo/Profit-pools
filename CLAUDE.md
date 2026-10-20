@@ -79,5 +79,6 @@ Streamlit hot-reloads only `app.py`. Restart the server after editing imported m
 
 ## Streamlit compatibility
 
-No custom components. Target Streamlit ≥ 1.37 (`st.dialog`, `on_select`). Keep a documented fallback for
-the Streamlit-in-Snowflake warehouse runtime (ARCHITECTURE.md §8).
+No custom components. Target Streamlit ≥ 1.60 (`st.dialog`, `on_select`, callable downloads). The guided tour's
+scroll script uses the built-in `st.components.v1.html`; the tour must keep working without it. Keep a
+documented fallback for the Streamlit-in-Snowflake warehouse runtime (ARCHITECTURE.md §9).

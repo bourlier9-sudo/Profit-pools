@@ -538,4 +538,4 @@ def _preview(meta: Metadata, a: Assumption, editing: str) -> None:
             for l, r in d.iterrows()).replace("$", "\\$"))
     for i in out["issues"]:
         if i.level == "warning":
-            st.caption("⚠ " + i.message.replace("$", "\\$"))
+            st.caption(":material/warning: " + i.message.replace("$", "\\$"))

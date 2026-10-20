@@ -39,14 +39,20 @@ profit_pools/
                                           consumer split, gain metric, node/link inspector facts, compare Δ  ✅ Phase 5
       growth.py                           growth table, indexed series, YoY matrix, revenue-growth bridge  ✅ Phase 6
       ownership.py                        owned assets: driver frame, value capture (stage 10), consolidation ✅ Phase 4b
-  export/                                 ExportContext · csv_export · html_snapshot · pptx_summary · figures     ✅ Phase 7
+      enterprise_flow.py                  "follow the enterprise dollar" flow (P&L and gain-only)          ✅ Phase 9
+      compare.py                          several scenario results side by side (KPIs, Δ by pool, series)  ✅ Phase 9
+    dictionary.py                         data dictionary tables from config and contracts                  ✅ Phase 9
+  export/                                 ExportContext · csv_export · html_snapshot · pptx_summary · figures ·
+                                          headlines (generated so-what titles)                                     ✅ Phase 7/9
   design/                                 tokens.py · theme.py (CSS + Plotly template) · format.py · components.py   ✅
-  charts/                                 marimekko.py · trends.py · sankey.py · growth.py (waterfall, heatmap)     ✅
+  charts/                                 marimekko.py · trends.py · sankey.py (incl. positions, enterprise) ·
+                                          growth.py (waterfall, heatmap, attractiveness) · compare.py               ✅
   shell/                                  state.py (pp.* keys) · data.py (cached, keyed by scenario + grouping) ·
                                           layout.py · scenario_builder.py (dialog) · assumption_wizard.py (guided
-                                          Where → What → How much) · grouping_editor.py (dialog)                   ✅
+                                          Where → What → How much) · grouping_editor.py (dialog) · tour.py         ✅
   modules/                                registry.py + profit_pools/page.py (A, B, E) + flows_section.py (C) +
-                                          growth_section.py (D)                                                     ✅
+                                          growth_section.py (D) + ownership_section.py + compare_section.py ·
+                                          data_dictionary/page.py                                                   ✅
 tests/
 ```
 
@@ -266,13 +272,17 @@ It runs the pipeline with the assumption and without it.
 * No calculation feeds a computed CAGR back into a driver, so there is no circularity.
 * `indexed()` rebases each pool to 100 in a start year (NaN on a non-positive base); `yoy()` is the
   pools × years growth matrix.
-* `revenue_bridge(node, y0, y1)` splits Δ allowed revenue, read only from pools and flows:
-  * payer pools: Δ members × starting revenue PMPM, then premium rate (the rest);
-  * recipients' payer-claims inflows (joined to source-plan members at state × county × plan): members
-    covered, then utilization (instances per member) and price per instance, or spend per member where
-    there are no instances (pharmacy);
-  * uninsured & government FFS, supplemental and top-down revenue as their own lines;
-  * cells present in only one year → "mix". Σ components = Δ revenue exactly (tested).
+* `bridge(node, y0, y1, metric="gain"|"revenue", by_child)` splits the change into economic drivers, read only
+  from pools and flows, sequentially at the finest grain:
+  * plans (segment × county): Δ members × starting gain (revenue) per member; then premium, medical cost and
+    admin cost per member;
+  * provider & pharmacy inflows (`flows.people` = members or population behind each flow, so plan, uninsured
+    and FFS inflows decompose the same way): people served, then services per person and price per service, or
+    spend per person where there are no service counts; supplemental lump sums separately; gain at the
+    starting margin, plus revenue × Δ margin;
+  * top-down pools: Δ market size × starting margin (per child pool with `by_child`), plus margin change;
+  * cells present in only one year → "mix". Σ drivers = Δ metric exactly (tested). Who pays is not a driver.
+* `attractiveness()`: revenue CAGR, margin and gain per pool with revenue-weighted averages.
 
 ### 6.6 Guided builder and impact view
 
@@ -379,4 +389,5 @@ Geography semantics:
 | Custom components | None. This keeps the warehouse runtime of Streamlit in Snowflake viable. |
 | Styling | CSS injected via `st.markdown(unsafe_allow_html=True)`, with stable `st-key-*` class hooks. Inter via Google Fonts, falling back to a system font stack (Snowflake or offline). |
 | Streamlit in Snowflake | Container runtime preferred (newer Streamlit, pip packages). Warehouse runtime: verify the pinned Streamlit version supports `st.dialog` and `on_select`, otherwise fall back to an expander editor. python-pptx must exist in the Snowflake Anaconda channel or the PPTX export is hidden. |
-| Exports | HTML via `plotly.io.to_html(include_plotlyjs="inline")`. PPTX via python-pptx native charts and shapes, with no Kaleido or Chrome dependency. |
+| Exports | HTML via `plotly.io.to_html(include_plotlyjs="inline")`. PPTX via python-pptx native charts and shapes, with no Kaleido or Chrome dependency. Downloads use callable data (Streamlit ≥ 1.60) so files are built only on click. |
+| Guided tour | Spotlight is CSS only. Auto-scroll and the "seen" flag use a tiny script in `st.components.v1.html` (same-origin frame, built into Streamlit — not a custom component). If a runtime blocks it, the tour still works without auto-scroll. |

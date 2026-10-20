@@ -20,10 +20,11 @@ from profit_pools.design import format as fmt
 from profit_pools.design.theme import PLOTLY_CONFIG
 from profit_pools.design.tokens import LAYER_COLOR
 from profit_pools.export import ExportContext
+from profit_pools.modules.profit_pools.compare_section import section_compare
 from profit_pools.modules.profit_pools.flows_section import section_flows
 from profit_pools.modules.profit_pools.growth_section import section_growth
 from profit_pools.modules.profit_pools.ownership_section import section_ownership
-from profit_pools.shell import data, layout
+from profit_pools.shell import data, layout, tour
 from profit_pools.shell import state as S
 
 K_TILE_REFS = "pp._tile_refs"
@@ -282,7 +283,7 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -
     st.markdown(ui.section_nav([("overview", "Overview"), ("trends", "Trends & detail"), ("flows", "Value flows"),
                                 ("growth", "Growth"), *([("ownership", "Value capture")]
                                                          if f.dataset == O.dataset() else []),
-                                ("detail", "Summary table")]),
+                                ("detail", "Summary table"), ("scenarios", "Compare scenarios")]),
                 unsafe_allow_html=True)
     st.markdown('<div id="overview"></div>', unsafe_allow_html=True)
     if f.view == "impact":
@@ -672,3 +673,5 @@ def render() -> None:
     section_growth(result, meta, f, geo, cmp)
     section_ownership(result, meta, f, geo, cmp)
     section_table(result, meta, f, geo, cmp)
+    section_compare(base, meta, f, geo)
+    tour.render()

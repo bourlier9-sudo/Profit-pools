@@ -71,8 +71,8 @@ def test_trend_growth_and_kpi_agree(world, node):
     m, _, _, res, _ = world
     s = V.node_series(res, m, "MARKET", node, Geo()).set_index("year")
     assert s.loc[Y, "revenue"] == pytest.approx(V.node_metrics(res, m, "MARKET", Y, node, Geo())["revenue"])
-    br = G.revenue_bridge(res, m, "MARKET", node, Geo(), 2025, 2031)
-    assert br["value"].iloc[-1] == pytest.approx(s.loc[2031, "revenue"])
+    br = G.bridge(res, m, "MARKET", node, Geo(), 2025, 2031)
+    assert br["value"].iloc[-1] == pytest.approx(s.loc[2031, "gain"])
     assert abs(br.attrs["residual"]) < 1.0
 
 

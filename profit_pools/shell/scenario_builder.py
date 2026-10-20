@@ -7,12 +7,13 @@ done by the core scenario engine — this module only edits configuration.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 
 import streamlit as st
 
 from profit_pools.core.config import CONFIG_DIR, load_config
-from profit_pools.core.model.scenario import Scenario, ScenarioFormatError
+from profit_pools.core.model.scenario import Scenario, ScenarioFormatError, library_from_json, library_to_json
 from profit_pools.core.model.scenario_engine import summarize
 from profit_pools.core.taxonomy import Metadata
 from profit_pools.shell import assumption_wizard as wizard
@@ -47,8 +48,12 @@ def _replace_draft(sc: Scenario) -> None:
 # ---------------------------------------------------------------------------
 
 def _status_badge(status: str) -> str:
-    return {"applied": "", "partly superseded": "⚠ partly superseded", "superseded": "⚠ fully superseded",
-            "conflict": "⛔ conflict", "invalid": "⛔ invalid", "no match": "⛔ matches no data"}.get(status, status)
+    """Streamlit badge markdown for a ledger status (empty when the assumption applies cleanly)."""
+    return {"applied": "", "partly superseded": ":orange-badge[:material/warning: Partly superseded]",
+            "superseded": ":orange-badge[:material/warning: Fully superseded]",
+            "conflict": ":red-badge[:material/block: Conflict]", "invalid": ":red-badge[:material/block: Invalid]",
+            "no match": ":red-badge[:material/block: Matches no data]",
+            "disabled": ":gray-badge[Disabled]"}.get(status, status)
 
 
 def _assumption_list(meta: Metadata) -> bool:
@@ -73,10 +78,10 @@ def _assumption_list(meta: Metadata) -> bool:
                           help="Enable / disable")
             with c1:
                 title = (a.label + " — ") if a.label else ""
-                badge = _status_badge(e.status) if (e and a.enabled) else ("disabled" if not a.enabled else "")
+                badge = _status_badge(e.status if (e and a.enabled) else ("disabled" if not a.enabled else "applied"))
                 mode = " · stack" if a.mode == "stack" else ""
                 st.markdown(_md(f"**{n}.** {title}{summarize(meta, a)}{mode}")
-                            + (f"  \n<span class='pp-muted'>{badge}</span>" if badge else ""),
+                            + (f"  \n{badge}" if badge else ""),
                             unsafe_allow_html=True)
             with c2:
                 with st.container(horizontal=True, gap="small", horizontal_alignment="right"):
@@ -92,7 +97,8 @@ def _assumption_list(meta: Metadata) -> bool:
                     st.button("", icon=":material/delete:", key=f"pp.b.rm.{a.id}", help="Delete",
                               on_click=lambda aid=a.id: _set_draft(_draft().remove(aid)))
             for i in issues:
-                (st.error if i.level == "error" else st.caption)(_md(("⚠ " if i.level == "warning" else "") + i.message))
+                (st.error if i.level == "error" else st.caption)(
+                    _md((":material/warning: " if i.level == "warning" else "") + i.message))
             if a.notes:
                 st.caption(_md(a.notes))
     general = [i for i in run.issues if i.assumption_id is None]
@@ -128,6 +134,8 @@ def _cb_save(meta: Metadata, editing: str) -> None:
 def _cb_apply() -> None:
     ss = st.session_state
     ss[S.K_APPLIED] = _draft()
+    if _draft().assumptions:
+        S.save_to_library(_draft())           # applied scenarios are always available for comparison
     ss[S.K_VIEW] = "compare" if _draft().enabled else "baseline"
     ss[S.K_EDIT] = None
     ss["pp.b.close"] = True
@@ -162,6 +170,79 @@ def _cb_import() -> None:
         ss["pp.b.import_msg"] = ("error", f"Could not import: {e}")
 
 
+# --- library -----------------------------------------------------------------------------------------
+
+def _lib_key(name: str) -> str:
+    return hashlib.sha1(name.encode()).hexdigest()[:8]
+
+
+def _cb_lib_load(name: str) -> None:
+    sc = next(s for s in S.library() if s.name == name)
+    _replace_draft(sc)
+    st.session_state[S.K_EDIT] = None
+
+
+def _cb_lib_delete(name: str) -> None:
+    st.session_state[S.K_LIBRARY] = [s for s in S.library() if s.name != name]
+    st.session_state[S.K_COMPARE] = [n for n in st.session_state.get(S.K_COMPARE, []) if n != name]
+
+
+def _cb_lib_save() -> None:
+    sc = _draft()
+    replaced = any(s.name == sc.name for s in S.library())
+    S.save_to_library(sc)
+    st.session_state["pp.b.lib_msg"] = ("ok", f"{'Updated' if replaced else 'Saved'} “{sc.name}” in the library.")
+
+
+def _cb_lib_import() -> None:
+    ss = st.session_state
+    up = ss.get("pp.b.lib_import")
+    if up is None:
+        return
+    try:
+        items = library_from_json(up.getvalue().decode("utf-8"))
+    except (ScenarioFormatError, UnicodeDecodeError) as e:
+        ss["pp.b.lib_msg"] = ("error", f"Could not import: {e}")
+        return
+    for sc in items:
+        S.save_to_library(sc)
+    ss["pp.b.lib_msg"] = ("ok", f"Added {len(items)} scenario{'s' if len(items) != 1 else ''} to the library.")
+
+
+def _library() -> None:
+    ss = st.session_state
+    lib = S.library()
+    with st.expander(f"Scenario library ({len(lib)})", icon=":material/folder_open:"):
+        st.caption("Saved for this session; compare them side by side at the bottom of the page. Download the "
+                   "library to keep it and upload it next time. Configuration only, no data.")
+        for sc in lib:
+            k = _lib_key(sc.name)
+            c1, c2 = st.columns([6, 2.4], vertical_alignment="center")
+            with c1:
+                n = len(sc.enabled)
+                st.markdown(_md(f"**{sc.name}** · {n} assumption{'s' if n != 1 else ''}"
+                                + (f"  \n<span class='pp-muted'>{sc.description}</span>" if sc.description else "")),
+                            unsafe_allow_html=True)
+            with c2:
+                with st.container(horizontal=True, gap="small", horizontal_alignment="right"):
+                    st.button("Load", key=f"pp.b.lib.load.{k}", on_click=_cb_lib_load, args=(sc.name,),
+                              help="Replace the draft with this scenario.")
+                    st.button("", icon=":material/delete:", key=f"pp.b.lib.del.{k}", on_click=_cb_lib_delete,
+                              args=(sc.name,), help="Remove from the library.")
+        with st.container(horizontal=True, gap="small", vertical_alignment="center"):
+            st.button("Save draft to library", key="pp.b.lib.save", icon=":material/bookmark_add:",
+                      on_click=_cb_lib_save, disabled=not _draft().assumptions,
+                      help="Saves under the scenario name (replaces a saved scenario with the same name)."
+                      if _draft().assumptions else "Add at least one assumption first.")
+            st.download_button("Download library", data=library_to_json(lib), file_name="scenario_library.json",
+                               mime="application/json", key="pp.b.lib.dl", on_click="ignore", disabled=not lib)
+        st.file_uploader("Upload a library or scenario file", type=["json"], key="pp.b.lib_import",
+                         on_change=_cb_lib_import)
+        msg = ss.pop("pp.b.lib_msg", None)
+        if msg:
+            (st.success if msg[0] == "ok" else st.error)(msg[1])
+
+
 @st.dialog("Scenario builder", width="large")
 def open_builder(meta: Metadata) -> None:
     ss = st.session_state
@@ -193,6 +274,7 @@ def open_builder(meta: Metadata) -> None:
         with a2:
             st.button("Load illustrative example", key="pp.b.example", width="stretch", on_click=_cb_example)
 
+    _library()
     text = load_config("methodology")
     with st.expander(text["provider_revenue"]["title"]):
         st.markdown(text["provider_revenue"][ss[S.K_DATASET]])

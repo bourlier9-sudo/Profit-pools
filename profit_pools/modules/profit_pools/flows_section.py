@@ -10,7 +10,9 @@ import pandas as pd
 import streamlit as st
 
 from profit_pools.charts import sankey
+from profit_pools.core.model import enterprise_flow as EF
 from profit_pools.core.model import flows_view as FV
+from profit_pools.core.model import ownership as own_mod
 from profit_pools.core.model import views as V
 from profit_pools.core.model.views import Geo
 from profit_pools.core.taxonomy import Metadata
@@ -28,7 +30,8 @@ def _init(meta: Metadata) -> None:
     ss = st.session_state
     for k, v in {"metric": "allowed", "sources": "group", "depth": 1, "layer_col": False, "expand": [],
                  "src_filter": [], "rec_filter": [], "min_share": 0.5, "consumer": False, "sel": None,
-                 "show": "chart"}.items():
+                 "show": "chart", "mode": "spend", "order": "auto", "pins": [], "ent_detail": "group",
+                 "ent_focus": "pnl"}.items():
         ss.setdefault(K + k, v)
     for k in ("expand", "rec_filter"):    # drop pools that the active grouping no longer has
         if any(n not in meta.taxonomy for n in ss[K + k]):
@@ -66,9 +69,88 @@ def _indent(meta: Metadata, nid: str) -> str:
     return ("  " * n.depth) + n.label
 
 
+# --- expand / collapse -----------------------------------------------------------------------------
+
+def _set_expand(nodes: set[str]) -> None:
+    st.session_state[K + "expand"] = sorted(nodes)
+
+
+def _descendant_groups(meta: Metadata, nid: str) -> set[str]:
+    out, stack = set(), list(meta.taxonomy.children(nid))
+    while stack:
+        n = stack.pop()
+        if not n.is_leaf:
+            out.add(n.id)
+            stack += list(meta.taxonomy.children(n.id))
+    return out
+
+
+def _cb_toggle(meta: Metadata, nid: str) -> None:
+    ex = set(st.session_state[K + "expand"])
+    if st.session_state[K + "x." + nid]:
+        ex.add(nid)
+    else:
+        ex -= {nid, *_descendant_groups(meta, nid)}
+    _set_expand(ex)
+
+
+def _cb_expand(meta: Metadata, nid: str, on: bool) -> None:
+    ex = set(st.session_state[K + "expand"])
+    _set_expand(ex | {nid} if on else ex - {nid} - _descendant_groups(meta, nid))
+
+
+def _shown_groups(meta: Metadata, dataset: str) -> list:
+    """Recipient groups currently drawn as Sankey nodes (or inside an expanded one), in tree order."""
+    depth, ex = st.session_state[K + "depth"], set(st.session_state[K + "expand"])
+    groups = set(_recipient_nodes(meta, dataset))
+    out = []
+    for n in meta.taxonomy:
+        if n.id not in groups or n.depth < depth:
+            continue
+        path = meta.taxonomy.path(n.id)
+        if all(a.id in ex for a in path[depth:-1]):
+            out.append(n)
+    return out
+
+
+def _expand_tree(meta: Metadata, dataset: str) -> None:
+    ss = st.session_state
+    depth = ss[K + "depth"]
+    shown = _shown_groups(meta, dataset)
+    if not shown:
+        st.caption("Every pool is already at its most detailed level.")
+        return
+    st.caption("Tick a pool to show its sub-pools; untick to fold it back. Deeper levels appear as you open them.")
+    for n in shown:
+        ss[K + "x." + n.id] = n.id in ss[K + "expand"]
+        st.checkbox((" " * (n.depth - depth)) + n.label, key=K + "x." + n.id, on_change=_cb_toggle,
+                    args=(meta, n.id))
+    st.button("Collapse all", key=K + "collapse_all", on_click=_set_expand, args=(set(),),
+              disabled=not ss[K + "expand"])
+
+
 def _controls(meta: Metadata, f: S.Filters) -> None:
     ss = st.session_state
+    if f.dataset != own_mod.dataset():
+        ss[K + "mode"] = "spend"
     with st.container(horizontal=True, wrap=True, vertical_alignment="bottom", gap="medium"):
+        if f.dataset == own_mod.dataset():
+            st.segmented_control("View", ["spend", "enterprise"], key=K + "mode", required=True,
+                                 format_func={"spend": "Spending flows", "enterprise": "Enterprise dollar"}.get,
+                                 help="Spending flows: who pays which providers. Enterprise dollar: where each "
+                                      "premium dollar goes, including owned assets, ending in total enterprise "
+                                      "operating gain.")
+        if ss[K + "mode"] == "enterprise":
+            st.segmented_control("Plans", ["group", "plan"], key=K + "ent_detail", required=True,
+                                 format_func={"group": "Plan groups", "plan": "Plan segments"}.get)
+            st.segmented_control("Show", ["pnl", "gain"], key=K + "ent_focus", required=True,
+                                 format_func={"pnl": "Every premium dollar", "gain": "Operating gain only"}.get,
+                                 help="Every premium dollar: claims, admin, owned assets and gain. Operating gain "
+                                      "only: how plans and owned assets add up to enterprise operating gain.")
+            st.space("stretch")
+            st.segmented_control("Show", ["chart", "table"], key=K + "show", required=True,
+                                 format_func={"chart": "Sankey", "table": "Table"}.get, label_visibility="hidden")
+            return
         st.segmented_control("Metric", list(FV.METRICS), key=K + "metric", required=True,
                              format_func={"allowed": "Allowed", "paid": "Payer-paid", "consumer": "Consumer",
                                           "gain": "Recipient gain"}.get,
@@ -88,10 +170,10 @@ def _controls(meta: Metadata, f: S.Filters) -> None:
         st.toggle("Consumers as a source", key=K + "consumer", disabled=ss[K + "metric"] != "allowed",
                   help="Moves member cost sharing and self-pay out of each source into one 'Consumers' source "
                        "(allowed metric only). Totals are unchanged.")
-        with st.popover("Filters & detail", icon=":material/filter_list:"):
-            st.multiselect("Expand recipients", _recipient_nodes(meta, f.dataset), key=K + "expand",
-                           format_func=lambda n: _indent(meta, n), placeholder="e.g. Hospitals",
-                           help="Shows the chosen pools one level deeper (repeat to go further).")
+        n_open = len(ss[K + "expand"])
+        with st.popover(f"Expand pools{f' · {n_open} open' if n_open else ''}", icon=":material/account_tree:"):
+            _expand_tree(meta, f.dataset)
+        with st.popover("Filters", icon=":material/filter_list:"):
             st.multiselect("Only these sources", _source_filter_options(meta, f.dataset), key=K + "src_filter",
                            format_func=lambda s: FV.source_label(meta, s), placeholder="All sources")
             st.multiselect("Only these recipients", _recipient_nodes(meta, f.dataset, 2), key=K + "rec_filter",
@@ -152,6 +234,18 @@ def _inspector(view: FV.SankeyView, meta: Metadata, result, base_view, f: S.Filt
                             "enrollment and PMPM, instances, related pool economics and attribution method."),
                     unsafe_allow_html=True)
         return
+    if sel[0] == "node" and sel[1].startswith("recipient:") and sel[1].split(":", 1)[1] in meta.taxonomy:
+        n = meta.taxonomy[sel[1].split(":", 1)[1]]
+        ex = set(ss[K + "expand"])
+        can_open = n.id in {g.id for g in _shown_groups(meta, f.dataset)} and n.id not in ex
+        can_fold = n.parent_id in ex
+        with st.container(horizontal=True, gap="small"):
+            st.button(f"Expand {n.short_label}", key=K + "open", icon=":material/unfold_more:", disabled=not can_open,
+                      on_click=_cb_expand, args=(meta, n.id, True),
+                      help=None if can_open else "Already at the most detailed level.")
+            st.button("Fold into parent", key=K + "fold", icon=":material/unfold_less:", disabled=not can_fold,
+                      on_click=_cb_expand, args=(meta, n.parent_id, False),
+                      help=None if can_fold else "Shown at the chosen recipient detail level; use the slider.")
     html = ['<div class="pp-inspector">']
     if sel[0] == "link":
         d = FV.link_detail(view, meta, result, f.dataset, f.year, geo, sel[1], sel[2])
@@ -213,6 +307,60 @@ def _inspector(view: FV.SankeyView, meta: Metadata, result, base_view, f: S.Filt
     st.markdown("".join(html) + "</div>", unsafe_allow_html=True)
 
 
+def _rank(meta: Metadata, nodes: pd.DataFrame) -> pd.Series:
+    """Hierarchy order: plan groups / funders in config order, pools in taxonomy order."""
+    order = {k: i for i, k in enumerate([*meta.lobs.groups, *meta.lobs.lobs, *meta.funding_groups,
+                                         *meta.funding_sources, *[n.id for n in meta.taxonomy]])}
+    return pd.Series([order.get(k, 1e6) for k in nodes["key"]], index=nodes["node_id"].to_numpy(), dtype=float)
+
+
+def _arrange(nodes: pd.DataFrame) -> tuple[str, tuple[str, ...]]:
+    """Node order and pins, kept across reruns and used by the chart (drag in the browser is temporary)."""
+    ss = st.session_state
+    ids = list(nodes["node_id"])
+    labels = nodes.set_index("node_id")["label"].to_dict()
+    if any(p not in ids for p in ss[K + "pins"]):
+        ss[K + "pins"] = [p for p in ss[K + "pins"] if p in ids]
+    with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+        with st.popover("Arrange nodes", icon=":material/swap_vert:"):
+            st.selectbox("Order within each column", list(sankey.ORDERS), key=K + "order",
+                         format_func=sankey.ORDERS.get)
+            st.multiselect("Pin to the top", ids, key=K + "pins", format_func=lambda n: labels.get(n, n),
+                           placeholder="Choose nodes")
+            st.caption("You can also drag nodes in the chart to look closer; dragging resets on the next change.")
+    return ss[K + "order"], tuple(ss[K + "pins"])
+
+
+def _enterprise(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> None:
+    ss = st.session_state
+    view = EF.build(result, meta, f.year, geo, ss[K + "ent_detail"], ss[K + "ent_focus"])
+    if view.note:
+        st.info(view.note)
+        return
+    delta = (EF.compare(view, EF.build(cmp, meta, f.year, geo, ss[K + "ent_detail"], ss[K + "ent_focus"]))
+             if cmp is not None else None)
+    t = view.totals
+    if ss[K + "show"] == "chart":
+        order, pins = _arrange(view.nodes)
+        st.plotly_chart(sankey.enterprise(view, delta=delta, order=order, pins=pins), config=PLOTLY_CONFIG,
+                        key="pp.sankey.ent")
+    else:
+        tbl = EF.table(view).assign(Amount=lambda d: d["Amount"] / 1e6).rename(columns={"Amount": "Amount ($M)"})
+        if delta is not None:
+            tbl["Δ vs baseline ($M)"] = delta.to_numpy() / 1e6
+        st.dataframe(tbl.drop(columns="Kind"), hide_index=True, width="stretch", height=420, column_config={
+            "Amount ($M)": st.column_config.NumberColumn(format="$%,.0f"),
+            "Δ vs baseline ($M)": st.column_config.NumberColumn(format="%+,.0f")})
+    notes = [f"Premiums {fmt.money(t['premium'])} + owned-asset revenue from members and other payers → "
+             f"enterprise operating gain {fmt.money(t['consolidated_gain'])} (plans {fmt.money(t['plan_gain'])}, "
+             f"owned assets {fmt.money(t['owned_gain'])}). Same totals as Value capture.",
+             "Claims paid to owned assets stay inside the enterprise: they become owned-asset revenue, then costs "
+             "and gain. Routing changes who keeps the gain, never how much is spent."]
+    if delta is not None:
+        notes.append("Compare: link color shows the % change vs baseline (red down, teal up).")
+    st.markdown("".join(ui.note(n) for n in notes + view.notes), unsafe_allow_html=True)
+
+
 def section_flows(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> None:
     _init(meta)
     ss = st.session_state
@@ -222,6 +370,9 @@ def section_flows(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> N
         f"{meta.datasets[f.dataset].label} · {f.year} · {'National' if geo.level == 'national' else geo.id}"),
         unsafe_allow_html=True)
     _controls(meta, f)
+    if ss[K + "mode"] == "enterprise":
+        _enterprise(result, meta, f, geo, cmp)
+        return
     cfg = _config(meta)
     view = FV.build(result, meta, f.dataset, f.year, geo, cfg)
     metric_label = FV.METRIC_LABELS[cfg.metric]
@@ -237,8 +388,11 @@ def section_flows(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> N
         if f.view == "impact" and delta is not None and not (delta.abs() >= V.IMPACT_MIN).any():
             st.info(f"The scenario does not change these flows in {f.year}.")
         else:
+            order, pins = _arrange(view.nodes)
             st.plotly_chart(sankey.build(view, meta, delta=delta, selected=sel_id, impact=f.view == "impact",
-                                         impact_min=V.IMPACT_MIN), config=PLOTLY_CONFIG, key="pp.sankey")
+                                         impact_min=V.IMPACT_MIN, order=order, pins=pins,
+                                         rank=_rank(meta, view.nodes)),
+                            config=PLOTLY_CONFIG, key="pp.sankey")
     notes = [f"Total {metric_label.lower()}: {fmt.money(view.total)} — every column sums to this total."]
     if cfg.metric != "gain":
         notes.append("Recipient revenue = payer claims + uninsured + government FFS + supplemental "

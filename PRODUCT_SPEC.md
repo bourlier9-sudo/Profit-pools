@@ -121,6 +121,11 @@ There is no separate page for assumptions. The assumption builder opens from the
   category (layer / pool / leaf), and spending category.
 * Users can filter LOBs and recipients, set a minimum-flow threshold with an "Other" roll-up, and choose a
   metric and unit.
+* Pools open level by level from an **Expand pools** tree (or Expand / Fold in the inspector); nodes can be
+  ordered (largest first, hierarchy, A–Z) and pinned to the top.
+* **Enterprise dollar** (Enterprise dataset): every premium dollar to outside providers, owned assets, admin
+  and plan gain; owned assets add members' cost sharing and other payers' patients; plan and owned-asset gain
+  flow into total enterprise operating gain. "Operating gain only" shows just the contributors and losses.
 * There is a baseline / scenario / Δ view and a table alternative.
 * Roll-ups reconcile exactly. Tooltips and the inspector list the underlying parts.
 * Inspector content: source and destination, annual value, share of parent totals, enrollment and PMPM or
@@ -132,7 +137,17 @@ There is no separate page for assumptions. The assumption builder opens from the
 * Users can make growth assumptions by layer, pool, LOB and geography.
 * Realized CAGRs are computed from results for revenue, gain and enrollment. Gain CAGR is "n/m" when an
   endpoint is ≤ 0.
-* There is a baseline vs scenario chart and a driver bridge (waterfall).
+* There is a baseline vs scenario chart and a driver bridge (waterfall): overall it bridges operating gain by
+  economic driver (enrollment, premium, medical and admin cost, people served, utilization, price, spend per
+  person, supplemental, top-down market growth, margin change); "Bridge for" switches to one pool with the
+  detail that fits it (top-down pools by sub-pool). Who pays is never a driver.
+* **Where to play**: revenue growth vs operating margin, bubble = operating gain, at this level or one deeper.
+* **Compare scenarios**: up to three library scenarios side by side with the baseline (KPI table, Δ gain by
+  pool, gain over time). The library is per session, seeded with fictional examples, and can be downloaded and
+  re-uploaded as JSON (configuration only).
+* **Data dictionary** page: glossary, pools, metrics, levers, plans and funders, data tables and a data
+  coverage matrix, searchable and downloadable.
+* **Guided tour**: a spotlight walkthrough that starts on the first visit and can be replayed from the sidebar.
 
 ## 9. Exports
 
@@ -142,7 +157,7 @@ There is no separate page for assumptions. The assumption builder opens from the
 | ZIP: scenario outputs | pools.csv, flows.csv, ownership.csv (state × leaf, all years, baseline / scenario / Δ), README, scenario.json |
 | JSON: scenario | Configuration only, schema-versioned. Import validates version and structure |
 | HTML snapshot | Self-contained charts and KPIs, labeled as a snapshot (not a simulator) |
-| PPTX summary | Title, KPIs, Marimekko (native shapes), trend and growth-driver charts (native), largest flows, scenario assumptions, value capture. Hidden if python-pptx is missing |
+| PPTX summary | Headline-titled, editable slides: executive summary, Marimekko (native shapes), where profit moves (two years), where to play (bubble), trend, growth drivers, largest flows, scenario, value capture, notes. Optional user template (.pptx) read in memory only. Hidden if python-pptx is missing |
 
 All exports come from the Export menu in the global bar and are generated on click.
 

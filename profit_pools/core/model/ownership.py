@@ -46,6 +46,8 @@ def assets(meta: Metadata) -> list[Asset]:
         if node not in meta.standard or meta.standard[node].children or not meta.standard[node].receives_flows:
             raise TaxonomyError(f"Owned asset {a['id']}: {node} must be a provider or pharmacy leaf that receives flows.")
         bad = [s for s in a["states"] if s not in meta.geography.states]
+        # An owned asset serves the enterprise's members, so it only operates where the enterprise has plans
+        # (checked against the data in tests/test_ownership.py).
         if bad:
             raise TaxonomyError(f"Owned asset {a['id']}: unknown states {bad}")
         if not 0 <= a["routing_share"] <= 1 or a["third_party_ratio"] < 0:

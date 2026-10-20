@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import streamlit as st
 
+from profit_pools.core.config import CONFIG_DIR
 from profit_pools.core.grouping import Grouping
 from profit_pools.core.model.scenario import Scenario
 from profit_pools.core.taxonomy import Metadata
@@ -27,6 +28,8 @@ K_IMPACT_OF = "pp.impact.of"         # "__all__" or one assumption id (run stand
 K_IMPACT_METRIC = "pp.impact.metric" # d_gain | d_revenue
 K_IMPACT_SIZE = "pp.impact.size"     # pool | change
 IMPACT_ALL = "__all__"
+K_LIBRARY = "pp.scenario.library"   # saved scenarios (session only), seeded with the fictional examples
+K_COMPARE = "pp.compare.names"       # library scenarios chosen for side-by-side comparison
 K_GROUPING = "pp.grouping.applied"   # Grouping driving the workspace (standard by default)
 K_GROUPING_DRAFT = "pp.grouping.draft"
 
@@ -71,10 +74,26 @@ def init(meta: Metadata) -> None:
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
+    if K_LIBRARY not in st.session_state:
+        st.session_state[K_LIBRARY] = example_scenarios()
     st.session_state.setdefault(K_GROUPING, Grouping())
     st.session_state.setdefault(K_GROUPING_DRAFT, st.session_state[K_GROUPING])
     if K_DRAFT not in st.session_state:
         st.session_state[K_DRAFT] = Scenario("Scenario A", base_year=meta.periods.base_year)
+
+
+def example_scenarios() -> list[Scenario]:
+    return [Scenario.from_json(f.read_text()) for f in sorted((CONFIG_DIR / "scenarios").glob("*.json"))]
+
+
+def library() -> list[Scenario]:
+    return st.session_state.get(K_LIBRARY, [])
+
+
+def save_to_library(sc: Scenario) -> None:
+    """Add or replace (same name) a scenario in the session library."""
+    lib = [s for s in library() if s.name != sc.name]
+    st.session_state[K_LIBRARY] = [*lib, sc]
 
 
 def grouping_json() -> str:

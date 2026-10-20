@@ -10,11 +10,12 @@ participants, and how scenarios would change those economics, all from one analy
 
 ```bash
 pip install -r requirements.txt
-python -m pytest                              # 501 unit, reconciliation, scenario, Sankey, growth, ownership, export and UI tests
+python -m pytest                              # 619 unit, reconciliation, scenario, Sankey, growth, ownership, export and UI tests
 python -m profit_pools.core.data.synthetic    # fictional dataset summary + contract validation (market + enterprise)
 ```
 
-Run the app with `streamlit run app.py` (see [BUILD_PLAN.md](BUILD_PLAN.md) for status).
+Run the app with `streamlit run app.py` (see [BUILD_PLAN.md](BUILD_PLAN.md) for status). A guided tour starts on
+the first visit; replay it from **Take the tour** in the sidebar. Definitions live on the **Data dictionary** page.
 
 ## Viewing it on a phone (or sharing a link)
 

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "example2",
+  "name": "Insourcing push",
+  "description": "Fictional example: the enterprise routes more of its members' physician care to owned clinics and runs them more efficiently.",
+  "base_year": 2025,
+  "assumptions": [
+    {"id": "in-route", "driver": "routing_share", "method": "pp", "value": 0.15, "mode": "replace", "enabled": true,
+     "phase_in": true, "label": "Route physician care to owned clinics", "notes": "Ramps up to +15 pp by 2031.",
+     "scope": {"years": {"start": 2027, "end": 2031}, "dataset": "ENTERPRISE", "node_id": "PRV_PHYS", "sources": [], "geography": []}},
+    {"id": "in-margin", "driver": "owned_margin", "method": "pp", "value": 0.01, "mode": "replace", "enabled": true,
+     "label": "Owned-asset efficiency", "notes": "",
+     "scope": {"years": {"start": 2028, "end": null}, "dataset": "ENTERPRISE", "node_id": null, "sources": [], "geography": []}},
+    {"id": "in-enr", "driver": "enrollment_growth", "method": "pp", "value": 0.005, "mode": "replace", "enabled": true,
+     "label": "Commercial growth from integrated offering", "notes": "",
+     "scope": {"years": {"start": 2027, "end": null}, "dataset": "ENTERPRISE", "node_id": "PAY_COMM", "sources": [], "geography": []}}
+  ]
+}

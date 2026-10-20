@@ -484,6 +484,8 @@ def ownership_view(result: ModelResult, meta: Metadata, year: int, geo: Geo = Ge
         return OwnershipView(pd.DataFrame(), {}, "No owned assets operate in this geography.")
     p = result.pools
     p = p[(p["dataset"] == ds) & (p["year"] == year) & p["members"].notna() & _geo_mask(p, geo)]
+    if p.empty:
+        return OwnershipView(pd.DataFrame(), {}, "The enterprise has no plans in this geography.")
     totals = own_mod.consolidate(o, p)
     labels = {a.id: a.label for a in own_mod.assets(meta)}
     g = o.groupby(["asset_id", "node_id"], sort=False)
