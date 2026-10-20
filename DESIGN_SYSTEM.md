@@ -21,7 +21,7 @@ and the Plotly template, so the UI and the charts can't drift apart.
 | Frame | 1440 wide. Auto-layout vertical. Background `--bg` |
 | Left nav | 216 fixed. Module list and footer (data source badge). Collapses to an icon rail (56) under 1200 |
 | Main column | Fluid. Horizontal padding 32. Max content width 1600 |
-| Global bar | Sticky top, wrapping horizontal container (wraps instead of clipping below about 1280). Hairline bottom border. Items: **Dataset** (segmented: Total market / Enterprise) · Year · Geography · View (Baseline / Scenario / Compare) · Scope · Scenario chip · Export |
+| Global bar | Sticky top, wrapping horizontal container (wraps instead of clipping below about 1280). Hairline bottom border. Items: **Dataset** (segmented: Total market / Enterprise) · Year · Geography · View (Baseline / Scenario / Compare / Impact only) · Scope · Pools (groupings) · Scenario chip · Export (popover; one full-width download per file, disabled with a reason when unavailable) |
 | Section rhythm | 40 between sections (A–E), 16 between a section header and its content |
 | Grid | 12 columns, 24 gutter. Marimekko spans 12. Supporting charts are 6 + 6 or 8 + 4 |
 | Inspector | Right column, 4/12 (about 360 at 1440), shown only when a selection exists. Never floats over the chart |
@@ -212,6 +212,15 @@ Negative numbers use a true minus (−), not a hyphen. Unavailable values render
 ### Indexed growth and YoY heatmap
 * Indexed lines rebased to 100, a hairline at 100, faint baseline lines when a scenario is active.
 * YoY heatmap uses the margin diverging scale (neutral at 0%), values printed in cells, "f" marks forecast.
+
+### Value capture
+* KPI strip (consolidated revenue, gain, margin, owned-asset gain, routed share) and two hairline tables:
+  the consolidation bridge (+ / − / = rows) and owned assets (owned margin with the market margin in
+  parentheses). No new colours.
+
+### PPTX
+* 13.33 × 7.5 in. Title 22 pt, subtitle 11 pt `--ink-3`, hairline rule, fictional-data footer on every slide.
+* Marimekko tiles are native rectangles using `tile_fill()`; missing margin uses a native diagonal pattern.
 
 ### Impact-only view
 * Unaffected tiles: `--line` fill, "no change" in `--ink-3`.

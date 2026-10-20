@@ -8,6 +8,7 @@ import streamlit as st
 
 from profit_pools.charts import marimekko, trends
 from profit_pools.core.config import load_config
+from profit_pools.core.model import ownership as O
 from profit_pools.core.model import views as V
 from profit_pools.core.model.engine import ModelResult
 from profit_pools.core.model.scenario import Scenario
@@ -18,8 +19,10 @@ from profit_pools.design import components as ui
 from profit_pools.design import format as fmt
 from profit_pools.design.theme import PLOTLY_CONFIG
 from profit_pools.design.tokens import LAYER_COLOR
+from profit_pools.export import ExportContext
 from profit_pools.modules.profit_pools.flows_section import section_flows
 from profit_pools.modules.profit_pools.growth_section import section_growth
+from profit_pools.modules.profit_pools.ownership_section import section_ownership
 from profit_pools.shell import data, layout
 from profit_pools.shell import state as S
 
@@ -277,7 +280,9 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -
                                f"{ds.label} · {yr} · {_geo_text(meta, geo)} · fictional data, for illustration only"),
                 unsafe_allow_html=True)
     st.markdown(ui.section_nav([("overview", "Overview"), ("trends", "Trends & detail"), ("flows", "Value flows"),
-                                ("growth", "Growth"), ("detail", "Summary table")]),
+                                ("growth", "Growth"), *([("ownership", "Value capture")]
+                                                         if f.dataset == O.dataset() else []),
+                                ("detail", "Summary table")]),
                 unsafe_allow_html=True)
     st.markdown('<div id="overview"></div>', unsafe_allow_html=True)
     if f.view == "impact":
@@ -636,7 +641,7 @@ def render() -> None:
         S.set_focus(None)
     if f.selected and any(x is not None and x not in meta.taxonomy for x in (f.selected[0], f.selected[2])):
         S.set_selected(None)
-    layout.global_bar(meta)
+    export_slot = layout.global_bar(meta)
     f = S.current()
     if f.focus is not None and not meta.in_dataset(f.focus, f.dataset):
         S.set_focus(None)
@@ -657,9 +662,13 @@ def render() -> None:
                      + " ".join(i.message for i in run.issues if i.level == "error")[:400])
             f = S.Filters(**{**f.__dict__, "view": "baseline"})
 
+    with export_slot:
+        layout.export_menu(ExportContext(meta, result, base, f.view, f.dataset, f.year, geo, f.basis, f.focus,
+                                         f.segment_by, _active_scenario(f.view) if f.view != "baseline" else None))
     section_overview(result, meta, f, geo, cmp)
     f = S.Filters(**{**S.current().__dict__, "view": f.view})
     section_trends(result, meta, f, geo, cmp)
     section_flows(result, meta, f, geo, cmp)
     section_growth(result, meta, f, geo, cmp)
+    section_ownership(result, meta, f, geo, cmp)
     section_table(result, meta, f, geo, cmp)

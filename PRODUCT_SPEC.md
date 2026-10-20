@@ -42,6 +42,7 @@ analytical model**:
 | **B. Pool trends and detail** | Revenue and gain trends, margin trends, composition change, selected-pool detail, summary table, key drivers of change |
 | **C. Value flows** | Configurable Sankey, flow inspector, tabular alternative |
 | **D. Growth and forecasting** | Indexed growth, CAGR table (history / period / baseline), revenue-growth drivers waterfall, YoY heatmap |
+| **Value capture** (Enterprise) | Consolidated revenue, gain and margin; consolidation bridge; owned assets (routed share, owned vs market margin) |
 | **E. Supporting detail and exports** | Full tables, coverage and provenance, downloads |
 
 There is no separate page for assumptions. The assumption builder opens from the scenario chip anywhere.
@@ -80,6 +81,9 @@ There is no separate page for assumptions. The assumption builder opens from the
 7. **Payer margin and provider margin assumptions are separate**, and they never cross-apply.
 8. **Hierarchy depth below each layer:** Payer and Manufacturer L1–L2, Health Services L1–L3, Provider and
    Pharmacy up to L4.
+9. **Ownership:** the enterprise owns care-delivery assets inside provider and pharmacy pools. Routing a
+   share of its members' care to them never changes spending or pool revenue; it changes who keeps the
+   gain. Consolidated gain = plan gain + owned-asset gain (intra-organization claims eliminated).
 
 ## 6. Scenarios
 
@@ -134,11 +138,13 @@ There is no separate page for assumptions. The assumption builder opens from the
 
 | Export | Contents |
 |---|---|
-| CSV: selected analysis | Rows behind the current view |
-| CSV: scenario outputs | Pool and flow results, baseline vs scenario |
+| CSV: selected analysis | Rows behind the current view (Δ vs baseline when comparing) |
+| ZIP: scenario outputs | pools.csv, flows.csv, ownership.csv (state × leaf, all years, baseline / scenario / Δ), README, scenario.json |
 | JSON: scenario | Configuration only, schema-versioned. Import validates version and structure |
 | HTML snapshot | Self-contained charts and KPIs, labeled as a snapshot (not a simulator) |
-| PPTX summary | Title, KPIs, Marimekko (native shapes), key charts, scenario assumptions. Optional module |
+| PPTX summary | Title, KPIs, Marimekko (native shapes), trend and growth-driver charts (native), largest flows, scenario assumptions, value capture. Hidden if python-pptx is missing |
+
+All exports come from the Export menu in the global bar and are generated on click.
 
 ## 10. Data coverage communication
 

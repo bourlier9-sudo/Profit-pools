@@ -1,10 +1,10 @@
 # Runtime
-streamlit>=1.50,<2      # dialogs, on_select, horizontal containers, st.space, widget width
+streamlit>=1.60,<2      # dialogs, on_select, horizontal containers, st.space, deferred (callable) downloads
 plotly>=5.22
 pandas>=2.2
 numpy>=1.26
 pyyaml>=6.0
-python-pptx>=0.6.23     # optional: PowerPoint export only (Phase 7)
+python-pptx>=1.0       # optional: PowerPoint export (hidden when missing)
 
 # Development
 pytest>=8

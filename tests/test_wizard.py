@@ -68,6 +68,9 @@ def test_enterprise_hides_market_only_levers(adapter):
     ids = {lv.id for _, _, _, lv in _combos(meta, ("ENTERPRISE",))}
     assert not ids & {"rec.fund", "rec.supp", "fund.pop", "fund.pmpm", "supp.amt"}
     assert "pay.shift" in ids
+    assert {"own.route", "own.margin"} <= ids                         # owned assets are enterprise-only
+    assert not {lv.id for _, _, _, lv in _combos(meta, ("MARKET",))} & {"own.route", "own.margin"}
+    assert "own.route" not in {lv.id for lv in W.levers_for(meta, "PRV_HOSP", "ENTERPRISE", "financials")}
     assert all(t in meta.taxonomy for t in W.shift_targets(meta, "ENTERPRISE", "PAY_MCD"))
 
 

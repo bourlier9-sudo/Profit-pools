@@ -20,6 +20,7 @@ import pandas as pd
 
 from profit_pools.core.config import load_config
 from profit_pools.core.data.adapters import DataAdapter
+from profit_pools.core.model import ownership
 from profit_pools.core.taxonomy import Metadata
 
 PAYER_KEY = ["dataset", "year", "state", "county", "node_id"]
@@ -40,10 +41,14 @@ class DriverCube:
     top_down: pd.DataFrame          # TOP_KEY + revenue, margin
     base_year: int
     last_year: int
+    ownership: pd.DataFrame | None = None   # asset × state × year: routing_share, owned_margin, … (ownership.py)
 
     def frames(self) -> dict[str, pd.DataFrame]:
-        return {k: getattr(self, k) for k in
-                ("payer", "spend", "population", "supplemental", "recipient_margin", "top_down")}
+        out = {k: getattr(self, k) for k in
+               ("payer", "spend", "population", "supplemental", "recipient_margin", "top_down")}
+        if self.ownership is not None:
+            out["ownership"] = self.ownership
+        return out
 
 
 def _na_str(s: pd.Series) -> pd.Series:
@@ -169,7 +174,9 @@ class ForecastRates:
     def __call__(self, driver: str, rows: pd.DataFrame, year: int) -> np.ndarray:
         """Rates for each row of a base-year frame (year-invariant in the baseline)."""
         col = _RATE_KEY_COLUMN[driver]
-        return rows[col].map(lambda k: self.rate(driver, k)).to_numpy(dtype=float)
+        keys = rows[col]
+        lut = {k: self.rate(driver, k) for k in keys.unique()}     # few distinct keys, many rows
+        return keys.map(lut).to_numpy(dtype=float)
 
 
 _RATE_KEY_COLUMN = {
@@ -219,8 +226,11 @@ def project(cube: DriverCube, meta: Metadata, rates: RateFn | None = None) -> Dr
     def cat(a, b):
         return pd.concat([a, b], ignore_index=True)
 
+    recipient_margin = cat(cube.recipient_margin, margin)
+    # Ownership drivers are configuration (not facts): built for every year once margins are complete.
+    own = ownership.drivers(meta, recipient_margin, meta.periods.all_years)
     return replace(cube, payer=cat(cube.payer, payer), spend=cat(cube.spend, spend),
                    population=cat(cube.population, population),
                    supplemental=cat(cube.supplemental, supplemental),
-                   recipient_margin=cat(cube.recipient_margin, margin),
-                   top_down=cat(cube.top_down, top), last_year=meta.periods.forecast_end)
+                   recipient_margin=recipient_margin,
+                   top_down=cat(cube.top_down, top), last_year=meta.periods.forecast_end, ownership=own)

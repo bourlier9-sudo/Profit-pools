@@ -10,7 +10,8 @@ Track progress in BUILD_PLAN.md and update it at the end of every phase.
   proprietary rules. State and county names are invented on purpose. Keep them that way.
 * **One engine.** Charts, KPIs, tables and exports consume `ModelResult` from `core/model/engine.py`. Never
   add a calculation in a chart or UI module that could disagree with the engine.
-* **`profit_pools/core` never imports Streamlit.** Keep it pure and pytest-able.
+* **`profit_pools/core` never imports Streamlit.** Keep it pure and pytest-able. Exports live in
+  `profit_pools/export` (they use the chart builders) and read only `ModelResult` and view functions.
 * **Never hardcode the taxonomy.** No fixed depth, pool list, LOB list or layer list in code. Use
   `Metadata` / `Taxonomy`, which are driven by YAML in `core/config/`.
 * **Agreed economics** (do not change without the user's approval):
@@ -27,6 +28,8 @@ Track progress in BUILD_PLAN.md and update it at the end of every phase.
   * Top-down pools (Manufacturer, Health Services, PBM Services) have no LOB, geography or flow detail.
   * Payer and provider margin assumptions never cross-apply.
   * Hierarchy below the layer: Payer and Manufacturer L1–L2, Health Services L1–L3, Provider and Pharmacy ≤ L4.
+  * Ownership: routing enterprise members' care to owned assets never changes spending or pool revenue, only
+    who keeps the gain. Consolidated gain = plan gain + owned gain (intra-organization claims eliminated).
 * **Assumptions target drivers, never derived outputs.** Each driver is consumed by exactly one pipeline stage.
 * **Overlapping assumptions conflict by default** (user decision). The most specific `replace` wins.
   Equal-specificity overlaps are blocking errors. Only `stack` compounds.

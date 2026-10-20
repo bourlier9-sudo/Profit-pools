@@ -14,16 +14,19 @@ the scenario engine (Phase 4) modifies the driver cube between stages.
                               supplemental at state grain); gain = revenue × pool margin
   8  top-down                 gain = revenue × margin
   9  assemble                 one `pools` frame + one `flows` frame
+ 10  ownership                owned-asset economics from enterprise flows (ownership.py); pools and
+                              flows are unchanged by routing
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
 
 from profit_pools.core.data.adapters import DataAdapter
+from profit_pools.core.model import ownership
 from profit_pools.core.model.cube import POP_KEY, DriverCube, _denominators, build_history, project
 from profit_pools.core.taxonomy import Metadata
 
@@ -55,6 +58,8 @@ class ModelResult:
     flows: pd.DataFrame
     base_year: int
     scenario_id: str | None = None
+    ownership: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=ownership.OUTPUT_COLUMNS))
+    """Owned-asset economics (asset × state × year, enterprise); see ownership.value_capture."""
 
 
 def run(cube: DriverCube, meta: Metadata, scenario_id: str | None = None) -> ModelResult:
@@ -154,7 +159,10 @@ def run(cube: DriverCube, meta: Metadata, scenario_id: str | None = None) -> Mod
     pools["is_forecast"] = pools["year"] > base_year
     pools["county"] = pools["county"].where(pools["county"].notna(), None)
     pools = pools[POOL_COLUMNS]
-    return ModelResult(pools=pools, flows=flows, base_year=base_year, scenario_id=scenario_id)
+
+    # Stage 10 — ownership: who keeps the gain on routed enterprise spend (values above are unchanged).
+    own = ownership.value_capture(flows, cube.ownership)
+    return ModelResult(pools=pools, flows=flows, base_year=base_year, scenario_id=scenario_id, ownership=own)
 
 
 def run_baseline(adapter: DataAdapter) -> ModelResult:
@@ -168,5 +176,4 @@ def relayer(result: ModelResult, meta: Metadata) -> ModelResult:
     layer = result.pools["node_id"].map({n.id: n.layer_id for n in meta.taxonomy})
     if (layer == result.pools["layer_id"]).all():
         return result
-    return ModelResult(pools=result.pools.assign(layer_id=layer), flows=result.flows,
-                       base_year=result.base_year, scenario_id=result.scenario_id)
+    return replace(result, pools=result.pools.assign(layer_id=layer))

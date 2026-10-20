@@ -38,7 +38,8 @@ profit_pools/
       flows_view.py                       Sankey views: configurable columns, expansion, filters, "Other" folding,
                                           consumer split, gain metric, node/link inspector facts, compare Δ  ✅ Phase 5
       growth.py                           growth table, indexed series, YoY matrix, revenue-growth bridge  ✅ Phase 6
-    export/           (Phase 7)           csv, scenario_json, html_snapshot, pptx_summary
+      ownership.py                        owned assets: driver frame, value capture (stage 10), consolidation ✅ Phase 4b
+  export/                                 ExportContext · csv_export · html_snapshot · pptx_summary · figures     ✅ Phase 7
   design/                                 tokens.py · theme.py (CSS + Plotly template) · format.py · components.py   ✅
   charts/                                 marimekko.py · trends.py · sankey.py · growth.py (waterfall, heatmap)     ✅
   shell/                                  state.py (pp.* keys) · data.py (cached, keyed by scenario + grouping) ·
@@ -239,8 +240,11 @@ It runs the pipeline with the assumption and without it.
 * Layer revenues are **gross**: payer claims are provider revenue. "Total market revenue" across layers is
   labeled *gross sector revenue (includes inter-sector payments)*. Operating gain *is* additive across
   layers, because each dollar of gain belongs to one pool.
-* Ownership (Phase 4b): intra-organization flows are eliminated in the consolidated view. Consolidated gain
-  = payer gain + owned-asset gain, and the elimination nets out of revenue and expense only.
+* Ownership (`ownership.py`, stage 10): routing splits enterprise members' spend in a pool between the
+  owned asset and external providers; it never changes spending, flows or pools. Owned revenue = routed +
+  third-party; owned gain = owned revenue × owned margin. In the consolidated view the plan-paid part of
+  routed spend is intra-organization and is eliminated from revenue and expense; consolidated gain = payer
+  gain + owned gain. `routing_share` and `owned_margin` are consumed only by this stage.
 
 ### 6.4 Lineage and the driver bridge (`scenario_engine.py`)
 
@@ -355,8 +359,11 @@ Geography semantics:
 
 ## 8. Performance and state
 
-* `st.cache_data` caches the adapter frames for the session lifetime.
-* The engine runs are cached by `(scenario.content_hash, filters)`. Baseline and scenario each compute once.
+* `st.cache_resource` holds the adapter, baseline and scenario runs (keyed by scenario and grouping JSON).
+* Views memoize a node × year aggregate per result object (`views._agg`, weak-referenced), so the many
+  roll-ups and series in one render scan the pools frame once per dataset × geography × basis.
+* Exports are generated only when their download is clicked (callable data).
+* Measured (AppTest): cold start 2.9 s, warm rerun 0.5 s, Compare 0.9 s.
 * Measured: a baseline run over about 108k flow rows and 16k pool rows (both datasets, 2019–2031) takes about
   0.5 seconds. A test enforces < 3 s.
 * Session state keys are namespaced `pp.*`. The **draft** scenario (being edited) is distinct from the

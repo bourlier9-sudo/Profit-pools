@@ -32,6 +32,20 @@ class TileRef:
     seg_node_id: str | None
 
 
+def tile_fill(r, color_by: str = "margin", impact_metric: str = "d_gain", scale: float = 0.0,
+              impact_min: float = 0.5e6) -> tuple[str, bool]:
+    """(fill hex, affected) for one tile row. Shared by the chart and the PPTX export."""
+    if color_by == "impact":
+        d = getattr(r, impact_metric, 0.0)
+        affected = abs(d) >= impact_min
+        # sqrt + floor so a small change still reads as changed next to a large one
+        t = np.sign(d) * (0.25 + 0.75 * np.sqrt(abs(d) / scale)) if scale > 0 else 0.0
+        return (diverging(float(t)) if affected else COLOR["line"]), affected
+    if color_by == "delta_margin" and hasattr(r, "d_margin"):
+        return delta_margin_color(r.d_margin if r.revenue_with_margin > 0 else None), False
+    return margin_color(r.margin if r.revenue_with_margin > 0 else None), False
+
+
 def _hover(r, col_label: str, basis_label: str, est: bool, extra: str, share: bool = True) -> str:
     lines = [f"<b>{r.seg_label}</b>" + (f"  <span style='color:{COLOR['ink_3']}'>in {col_label}</span>"
                                          if r.seg_label != col_label else "")]
@@ -80,15 +94,7 @@ def build(tiles: pd.DataFrame, col_labels: dict[str, str], *, selected: TileRef 
             y0 = top - h
             has_d = hasattr(r, "d_margin")
             d_imp = getattr(r, impact_metric, 0.0) if color_by == "impact" else 0.0
-            affected = color_by == "impact" and abs(d_imp) >= impact_min
-            if color_by == "impact":
-                # sqrt + floor so a small change still reads as changed next to a large one
-                t = np.sign(d_imp) * (0.25 + 0.75 * np.sqrt(abs(d_imp) / scale)) if scale > 0 else 0.0
-                fill = diverging(float(t)) if affected else COLOR["line"]
-            elif color_by == "delta_margin" and has_d:
-                fill = delta_margin_color(r.d_margin if r.revenue_with_margin > 0 else None)
-            else:
-                fill = margin_color(r.margin if r.revenue_with_margin > 0 else None)
+            fill, affected = tile_fill(r, color_by, impact_metric, scale, impact_min)
             xs.append(x0 + w / 2)
             ws.append(max(w - COL_GAP, w * 0.6))
             bases.append(y0 + ROW_GAP / 2)

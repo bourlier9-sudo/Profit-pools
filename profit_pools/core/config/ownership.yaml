@@ -1,0 +1,54 @@
+# Ownership and value capture (Phase 4b) — FICTIONAL integrated organization.
+#
+# The enterprise (a payer) owns care-delivery assets. Each asset sits inside one recipient leaf and
+# serves part of the enterprise's own members' spending there ("routing"), plus some patients of other
+# payers ("third-party" revenue). Routing does NOT change how much is spent or which pool receives it:
+# the owned clinic is still a provider in that pool. It changes who keeps the gain.
+#
+# Definitions (per asset × state × year, enterprise dataset):
+#   enterprise spend   allowed payer-claims inflows from enterprise plans to the asset's leaf
+#   routed (internal)  routing_share × enterprise spend
+#   third-party        third_party_ratio × routed           (estimate; other payers' patients)
+#   owned revenue      routed + third-party
+#   owned gain         owned revenue × owned margin
+#   owned margin       market margin of the leaf in that state + margin_offset (estimate)
+# Consolidation: the plan-paid part of routed spend is intra-organization and is eliminated from both
+# consolidated revenue and expense; member cost sharing paid to the owned asset is external revenue.
+# Consolidated gain = payer gain + owned gain (the elimination nets out).
+#
+# Scenario drivers: routing_share and owned_margin (drivers.yaml, scope_kind: ownership).
+schema_version: 1
+
+organization:
+  label: "Enterprise (fictional), consolidated"
+  dataset: ENTERPRISE
+
+assets:
+  - id: OWN_PRIMARY
+    label: Owned primary care clinics
+    node_id: PRV_PHYS_PRIMARY
+    states: [NVL, ESH, SRG, WMR, CLP, LKD]
+    routing_share: 0.18
+    margin_offset: -0.010
+    third_party_ratio: 0.35
+  - id: OWN_BH
+    label: Owned behavioral health practices
+    node_id: PRV_PHYS_BH
+    states: [NVL, ESH, CLP]
+    routing_share: 0.12
+    margin_offset: 0.000
+    third_party_ratio: 0.25
+  - id: OWN_HOME_HEALTH
+    label: Owned home health agency
+    node_id: PRV_PAC_HH
+    states: [SRG, WMR, LKD]
+    routing_share: 0.22
+    margin_offset: 0.015
+    third_party_ratio: 0.60
+  - id: OWN_MAIL_RX
+    label: Owned mail-order pharmacy
+    node_id: RX_MAIL
+    states: [NVL, ESH, SRG, WMR, CLP, LKD]
+    routing_share: 0.55
+    margin_offset: 0.005
+    third_party_ratio: 0.15

@@ -9,6 +9,7 @@
 #   recipient    a recipient node (any level)        — cells: dataset × year × state × leaf
 #   funding      a funding source (market only)      — cells: year × geo × source
 #   top_down     a top-down node (any level)         — cells: year × leaf (market only)
+#   ownership    a pool containing an owned asset    — cells: year × state × asset (enterprise only)
 # requires     data conditions; drivers are hidden where they are not met
 #   instances    the category carries service instances (never pharmacy)
 # methods      pct   multiplicative % change      (value 0.05 = +5%)
@@ -149,6 +150,20 @@ drivers:
     unit: ratio
     stage: 8
     scope_kind: top_down
+    methods: [pp, set]
+  routing_share:
+    label: "Share of our members' care delivered by owned assets"
+    explains: "Moves enterprise members' care in this pool from external providers to the enterprise's own assets. Total spending and pool revenue are unchanged; the enterprise keeps the owned asset's gain (ownership.yaml)."
+    unit: ratio
+    stage: 10
+    scope_kind: ownership
+    methods: [pp, set]
+  owned_margin:
+    label: "Owned-asset operating margin"
+    explains: "How much of each owned-asset revenue dollar the enterprise keeps. Market pool margins are unchanged."
+    unit: ratio
+    stage: 10
+    scope_kind: ownership
     methods: [pp, set]
 
 # Forecast-year growth drivers (annual rates). A growth rate entered here is

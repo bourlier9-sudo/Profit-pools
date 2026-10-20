@@ -13,12 +13,13 @@ from dataclasses import dataclass
 import plotly.graph_objects as go
 import streamlit as st
 
+from profit_pools.core.model import ownership
 from profit_pools.core.model.scenario import Assumption, Scenario, Scope, YearRange
 from profit_pools.core.model.scenario_engine import driver_spec, is_growth, summarize
 from profit_pools.core.taxonomy import Metadata
 from profit_pools.design import format as fmt
 from profit_pools.design.theme import PLOTLY_CONFIG, TEMPLATE_NAME
-from profit_pools.design.tokens import LAYER_COLOR
+from profit_pools.design.tokens import COLOR, LAYER_COLOR, OTHER
 from profit_pools.shell import data
 from profit_pools.shell import state as S
 
@@ -34,7 +35,7 @@ class Lever:
     id: str
     driver: str
     category: str
-    applies: str            # payer | recipient | top_down | funding | supplemental
+    applies: str            # payer | recipient | top_down | funding | supplemental | owned
     label: str
     pick: str | None = None  # "paid_to" (payer → recipients) · "paid_by_payers" · "paid_by_funding" · "paid_by_any"
     instances: bool = False  # needs service-instance data (never pharmacy)
@@ -66,6 +67,9 @@ LEVERS: list[Lever] = [
     Lever("rec.margin", "provider_margin", "financials", "recipient", "Operating efficiency (margin) — revenue unchanged"),
     Lever("rec.g.util", "utilization_trend", "growth", "recipient", "Utilization trend (per year)", "paid_by_any"),
     Lever("rec.g.price", "unit_cost_trend", "growth", "recipient", "Reimbursement / unit-cost trend (per year)", "paid_by_any"),
+    # --- owned assets inside provider & pharmacy pools (enterprise) --------------------
+    Lever("own.route", "routing_share", "financials", "owned", "Share of our members' care delivered by owned assets"),
+    Lever("own.margin", "owned_margin", "financials", "owned", "Owned-asset operating margin"),
     # --- top-down pools -------------------------------------------------------------
     Lever("td.size", "top_down_revenue", "financials", "top_down", "Market size (top-down estimate)"),
     Lever("td.margin", "top_down_margin", "financials", "top_down", "Operating margin (top-down estimate)"),
@@ -116,6 +120,8 @@ def where_kinds(meta: Metadata, w: str, dataset: str | None) -> set[str]:
     kinds = set()
     for l in leaves:
         kinds.add({"payer_pnl": "payer", "margin_on_revenue": "recipient", "top_down": "top_down"}[l.economics])
+    if dataset in (None, ownership.dataset()) and {l.id for l in leaves} & ownership.owned_leaves(meta):
+        kinds.add("owned")
     return kinds
 
 
@@ -265,6 +271,8 @@ def build(meta: Metadata, base_id: str | None) -> Assumption:
     ds = None if ss[W + "dataset"] == "BOTH" else ss[W + "dataset"]
     if lv.applies in ("funding", "supplemental", "top_down") or lv.id == "rec.fund":
         ds = "MARKET"
+    if lv.applies == "owned":
+        ds = ownership.dataset()
     node, sources = None, ()
     if lv.applies == "payer":
         if lv.pick == "paid_to":
@@ -450,7 +458,11 @@ def render(meta: Metadata, editing: str, on_save) -> None:
         a1, a2 = st.columns([2, 1])
         with a1:
             if lv.applies != "top_down":
-                geo = [g for s_ in meta.geography.states.values() for g in [s_.id, *[c for c, _, _ in s_.counties]]]
+                state_only = lv.applies == "owned" or lv.driver == "provider_margin"   # state-grain drivers
+                geo = [g for s_ in meta.geography.states.values()
+                       for g in [s_.id, *([] if state_only else [c for c, _, _ in s_.counties])]]
+                if any(g not in geo for g in ss.get(W + "geo") or []):
+                    ss[W + "geo"] = [g for g in ss[W + "geo"] if g in geo]
                 st.multiselect("Geography", geo, key=W + "geo", placeholder="National (all)",
                                format_func=lambda g: meta.geography.states[g].label if g in meta.geography.states
                                else "   " + meta.geography.county_label(g))
@@ -490,6 +502,20 @@ def _preview(meta: Metadata, a: Assumption, editing: str) -> None:
     if errs:
         st.error(" ".join(i.message for i in errs).replace("$", "\\$"))
         return
+    if a.driver in ("routing_share", "owned_margin"):
+        og = out.get("owned_gain")
+        if og is None or og.abs().max() < 1:
+            st.caption("No change to owned-asset gain in any year — check the years, pool and geography.")
+            return
+        fig = go.Figure(go.Bar(x=og.index, y=og.to_numpy() / 1e6, marker_color=[
+            COLOR["accent"] if v >= 0 else COLOR["bad"] for v in og.to_numpy()],
+            hovertemplate="%{x}: %{y:$,.1f}M<extra></extra>"))
+        fig.update_layout(template=TEMPLATE_NAME, height=200, margin=dict(t=28, r=8, b=24, l=48),
+                          yaxis=dict(tickprefix="$", ticksuffix="M"), xaxis=dict(dtick=1),
+                          title=dict(text="Change in owned-asset gain (this assumption)", font=dict(size=12), x=0))
+        st.plotly_chart(fig, config=PLOTLY_CONFIG, key=W + "preview_chart")
+        st.caption("Spending and pool revenue are unchanged; only who keeps the gain moves.")
+        return
     series = out.get("series")
     if series is None or series.empty or (series[["revenue", "gain"]].abs().max().max() < 1):
         st.caption("No change to revenue or gain in any year — check the years, dataset and scope.")
@@ -499,7 +525,7 @@ def _preview(meta: Metadata, a: Assumption, editing: str) -> None:
         if g["gain"].abs().max() < 1 and g["revenue"].abs().max() < 1:
             continue
         fig.add_trace(go.Scatter(x=g["year"], y=g["gain"] / 1e9, mode="lines+markers", name=meta.taxonomy[layer].short_label,
-                                 line=dict(width=2, color=LAYER_COLOR.get(layer, "#888")), marker=dict(size=5),
+                                 line=dict(width=2, color=LAYER_COLOR.get(layer, OTHER)), marker=dict(size=5),
                                  hovertemplate="%{fullData.name} %{x}: %{y:$,.2f}B<extra></extra>"))
     fig.update_layout(template=TEMPLATE_NAME, height=220, margin=dict(t=28, r=8, b=24, l=48),
                       yaxis=dict(tickprefix="$", ticksuffix="B", zeroline=True), xaxis=dict(dtick=1),

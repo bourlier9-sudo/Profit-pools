@@ -296,6 +296,6 @@ Tolerance: relative 1e-9. The identities are exact by construction.
 
 ## 10. Planned additions
 
-* **Ownership (Phase 4b):** an owned-asset carve-out of a recipient leaf, with a `routing_share` driver that
-  moves enterprise allowed spend from external providers to the owned asset. Intra-organization flows are
-  eliminated in the consolidated view. This will add `ownership.yaml`.
+* **Ownership (implemented, Phase 4b):** configuration, not a fact table — `config/ownership.yaml` lists
+  owned assets (recipient leaf, states, routing share, margin offset, third-party ratio). It adds no
+  contract columns; definitions are in the file header and ARCHITECTURE.md §6.3.

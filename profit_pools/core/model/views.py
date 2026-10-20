@@ -14,11 +14,14 @@ Geography semantics
 
 from __future__ import annotations
 
+import weakref
+from functools import lru_cache
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 
+from profit_pools.core.model import ownership as own_mod
 from profit_pools.core.model.engine import ModelResult
 from profit_pools.core.taxonomy import Metadata
 
@@ -97,27 +100,54 @@ def select(result: ModelResult, dataset: str, geo: Geo, years: list[int] | int |
     return out
 
 
+_AGG: dict[tuple, tuple[weakref.ref, pd.DataFrame]] = {}
+
+
+def _agg(result: ModelResult, dataset: str, geo: Geo, basis: str) -> pd.DataFrame:
+    """node × year sums of ADDITIVE (after the basis transform), memoized per result object. Every
+    roll-up and series sums this, so repeated calls in one render do not rescan the pools frame."""
+    key = (id(result), dataset, geo.level, geo.id, basis)
+    hit = _AGG.get(key)
+    if hit is not None and hit[0]() is result:
+        return hit[1]
+    g = select(result, dataset, geo, None, basis).groupby(["node_id", "year"])[ADDITIVE].sum(min_count=1)
+    if len(_AGG) > 96:
+        _AGG.clear()
+    _AGG[key] = (weakref.ref(result), g)
+    return g
+
+
 def _finish(g: pd.DataFrame) -> pd.DataFrame:
     """Recompute non-additive measures from additive parts."""
-    g = g.copy()
+    a = {c: g[c].to_numpy(dtype=float) for c in ADDITIVE}
+    rwm, rev, mem = a["revenue_with_margin"], a["revenue"], a["members"]
+    has_m = mem > 0
+    mm12 = mem * 12
     with np.errstate(divide="ignore", invalid="ignore"):
-        g["margin"] = np.where(g["revenue_with_margin"] > 0, g["gain"] / g["revenue_with_margin"], np.nan)
-        g["margin_coverage"] = np.where(g["revenue"] > 0, g["revenue_with_margin"] / g["revenue"], np.nan)
-        mm12 = g["members"] * 12
-        g["revenue_pmpm"] = np.where(mm12 > 0, g["payer_revenue"] / mm12, np.nan)
-        g["paid_pmpm"] = np.where(mm12 > 0, g["claims"] / mm12, np.nan)
-        g["allowed_pmpm"] = np.where(mm12 > 0, g["allowed"] / mm12, np.nan)
-        g["mlr"] = np.where(g["members"] > 0, g["claims"] / g["payer_revenue"], np.nan)
-    g.loc[g["revenue_with_margin"] <= 0, "gain"] = np.nan
-    g.loc[~(g["members"] > 0), ["members", "claims", "allowed", "payer_revenue", "payer_opex"]] = np.nan
-    return g
+        cols = {
+            "margin": np.where(rwm > 0, a["gain"] / rwm, np.nan),
+            "margin_coverage": np.where(rev > 0, rwm / rev, np.nan),
+            "revenue_pmpm": np.where(has_m, a["payer_revenue"] / mm12, np.nan),
+            "paid_pmpm": np.where(has_m, a["claims"] / mm12, np.nan),
+            "allowed_pmpm": np.where(has_m, a["allowed"] / mm12, np.nan),
+            "mlr": np.where(has_m, a["claims"] / a["payer_revenue"], np.nan),
+        }
+    cols["gain"] = np.where(rwm > 0, a["gain"], np.nan)
+    for c in ("members", "claims", "allowed", "payer_revenue", "payer_opex"):
+        cols[c] = np.where(has_m, a[c], np.nan)
+    return g.assign(**cols)
 
 
 def _ancestor_map(meta: Metadata, depth: int) -> dict[str, str]:
     """leaf id → its ancestor at `depth` (the leaf itself if shallower than depth)."""
+    return _ancestors(meta.taxonomy, depth)
+
+
+@lru_cache(maxsize=64)
+def _ancestors(tax, depth: int) -> dict[str, str]:
     out = {}
-    for leaf in meta.taxonomy.leaves():
-        path = meta.taxonomy.path(leaf.id)
+    for leaf in tax.leaves():
+        path = tax.path(leaf.id)
         out[leaf.id] = path[min(depth, len(path) - 1)].id
     return out
 
@@ -168,12 +198,13 @@ def rollup(result: ModelResult, meta: Metadata, dataset: str, year: int,
         if not children:
             raise ValueError(f"{parent_id} is a leaf; nothing to roll up")
 
-    df = select(result, dataset, geo, year, basis)
+    agg = _agg(result, dataset, geo, basis)
+    df = agg.xs(year, level="year") if year in agg.index.get_level_values("year") else agg.iloc[0:0].droplevel("year")
     amap = _ancestor_map(meta, depth)
-    df["child"] = df["node_id"].map(amap)
     child_ids = [c.id for c in children]
-    df = df[df["child"].isin(child_ids)]
-    g = df.groupby("child")[ADDITIVE].sum(min_count=1)
+    child = df.index.map(amap)
+    df = df[child.isin(child_ids)]
+    g = df.groupby(child[child.isin(child_ids)])[ADDITIVE].sum(min_count=1)
     g = _finish(g.reindex([c for c in child_ids if c in g.index]))
 
     unavailable = _unavailable(meta, [c for c in child_ids if c not in g.index], geo, basis)
@@ -212,11 +243,11 @@ def economics_label(meta: Metadata, node_id: str, dataset: str) -> str:
 def node_series(result: ModelResult, meta: Metadata, dataset: str, node_id: str | None,
                 geo: Geo = Geo(), basis: str = "allowed") -> pd.DataFrame:
     """Per-year metrics for one node (all in-dataset pools when node_id is None)."""
-    df = select(result, dataset, geo, None, basis)
+    df = _agg(result, dataset, geo, basis)
     if node_id is not None:
         leaves = {l.id for l in meta.leaves_in_dataset(dataset, node_id)}
-        df = df[df["node_id"].isin(leaves)]
-    g = df.groupby("year")[ADDITIVE].sum(min_count=1)
+        df = df[df.index.get_level_values("node_id").isin(leaves)]
+    g = df.groupby(level="year")[ADDITIVE].sum(min_count=1)
     g = _finish(g)
     g["is_forecast"] = g.index > result.base_year
     return g.reset_index()
@@ -431,3 +462,43 @@ def node_metrics(result: ModelResult, meta: Metadata, dataset: str, year: int, n
     parent = meta.taxonomy[node_id].parent_id
     rows = rollup(result, meta, dataset, year, parent, geo, basis).rows.set_index("node_id")
     return rows.loc[node_id] if node_id in rows.index else None
+
+
+@dataclass(frozen=True)
+class OwnershipView:
+    assets: pd.DataFrame        # one row per owned asset (summed over states in scope)
+    totals: dict                # consolidated P&L lines (ownership.consolidate)
+    note: str | None = None     # why the view is empty, if it is
+
+
+def ownership_view(result: ModelResult, meta: Metadata, year: int, geo: Geo = Geo()) -> OwnershipView:
+    """Owned assets and the consolidated enterprise P&L for one year and geography (state grain)."""
+    ds = own_mod.dataset()
+    if geo.level == "county":
+        return OwnershipView(pd.DataFrame(), {}, "Owned assets are tracked by state; choose a state or National.")
+    o = result.ownership
+    o = o[(o["dataset"] == ds) & (o["year"] == year)]
+    if geo.level == "state":
+        o = o[o["state"] == geo.id]
+    if o.empty:
+        return OwnershipView(pd.DataFrame(), {}, "No owned assets operate in this geography.")
+    p = result.pools
+    p = p[(p["dataset"] == ds) & (p["year"] == year) & p["members"].notna() & _geo_mask(p, geo)]
+    totals = own_mod.consolidate(o, p)
+    labels = {a.id: a.label for a in own_mod.assets(meta)}
+    g = o.groupby(["asset_id", "node_id"], sort=False)
+    a = g[["enterprise_spend", "routed", "third_party", "owned_revenue", "external_spend"]].sum()
+    a["owned_gain"] = g["owned_gain"].sum(min_count=1)
+    known = o["owned_gain"].notna()
+    rk = o[known].groupby(["asset_id", "node_id"])["owned_revenue"].sum().reindex(a.index)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        a["owned_margin"] = a["owned_gain"] / rk
+        a["routing_share"] = a["routed"] / a["enterprise_spend"]
+        mk = (o.assign(w=o["routed"] * o["market_margin"]).groupby(["asset_id", "node_id"])["w"].sum(min_count=1)
+              .reindex(a.index))
+        a["market_margin"] = mk / a["routed"]
+    a = a.reset_index()
+    a["label"] = a["asset_id"].map(labels)
+    a["pool"] = a["node_id"].map(lambda n: meta.taxonomy[n].short_label if n in meta.taxonomy else n)
+    a["states"] = a["asset_id"].map(o.groupby("asset_id")["state"].nunique())
+    return OwnershipView(a, totals)

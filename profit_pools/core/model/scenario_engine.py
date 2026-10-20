@@ -8,6 +8,7 @@ Pipeline (ARCHITECTURE.md §6):
   6  supplemental payments
   7  recipient (provider) margin
   8  top-down revenue and margin
+ 10  ownership: routing share, owned-asset margin
   then engine.run() derives every financial result.
 
 Assumptions only ever change drivers. Each driver is consumed by one stage, so
@@ -23,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from profit_pools.core.config import load_config
+from profit_pools.core.model import ownership
 from profit_pools.core.model.cube import DriverCube, ForecastRates, project
 from profit_pools.core.model.engine import ModelResult, run
 from profit_pools.core.model.resolve import Issue, describe_scope, expand_sources, match, resolve
@@ -48,11 +50,13 @@ LEVEL_DRIVERS: dict[str, tuple] = {
     "provider_margin": ("recipient_margin", "margin", "rate", "node_id", None),
     "top_down_revenue": ("top_down", "revenue", "additive", "node_id", None),
     "top_down_margin": ("top_down", "margin", "rate", "node_id", None),
+    "routing_share": ("ownership", "routing_share", "rate", "node_id", None),
+    "owned_margin": ("ownership", "owned_margin", "rate", "node_id", None),
 }
 STAGE_ORDER = ["enrollment", "funding_population", "enrollment_shift", "premium_pmpm", "opex_pmpm",
                "opex_volume_scaling", "payer_margin", "allowed_pmpm", "funding_pmpm", "utilization",
                "unit_price", "member_cost_share", "supplemental_payments", "provider_margin",
-               "top_down_revenue", "top_down_margin"]
+               "top_down_revenue", "top_down_margin", "routing_share", "owned_margin"]
 GROWTH_NODE_COL = {"enrollment_growth": "node_id", "premium_trend": "node_id", "opex_trend": "node_id",
                    "utilization_trend": "target_id", "unit_cost_trend": "target_id",
                    "population_growth": None, "supplemental_growth": "target_id", "top_down_growth": "node_id"}
@@ -147,6 +151,8 @@ def _eligible_node(meta: Metadata, kind: str, node_id: str | None) -> bool:
         return any(l.receives_flows for l in leaves)
     if kind == "top_down":
         return any(l.economics == "top_down" for l in leaves)
+    if kind == "ownership":
+        return bool({l.id for l in leaves} & ownership.owned_leaves(meta))
     return True
 
 
@@ -195,6 +201,10 @@ def validate(meta: Metadata, scenario: Scenario) -> list[Issue]:
                                    f"({_kind_text(kind)}).")
         if kind == "funding" and a.driver != "supplemental_payments" and sc.node_id is not None:
             err("eligibility", f"{spec['label']} is scoped by funding source, not by pool.")
+        if kind == "ownership" and sc.dataset not in (None, ownership.dataset()):
+            err("dataset.ownership", "Owned assets belong to the enterprise; scope this to the enterprise dataset.")
+        if kind == "ownership" and any(g not in meta.geography.states for g in sc.geography):
+            err("geography.ownership", "Owned assets are tracked by state; scope to states, not counties.")
         if kind == "top_down" and sc.dataset == "ENTERPRISE":
             err("dataset.top_down", "Top-down pools exist only in the total-market dataset.")
         try:
@@ -202,7 +212,7 @@ def validate(meta: Metadata, scenario: Scenario) -> list[Issue]:
         except KeyError as e:
             err("sources", f"Unknown source {e.args[0]!r}.")
             lobs, funding = set(), set()
-        if kind in ("payer", "top_down", "recipient") and sc.sources:
+        if kind in ("payer", "top_down", "recipient", "ownership") and sc.sources:
             err("sources", f"{spec['label']} is not scoped by payer or funding source.")
         if a.driver == "allowed_pmpm" and funding:
             err("sources", "Use 'Uninsured / public-program PMPM' for funding sources; allowed PMPM applies to payer LOBs.")
@@ -239,7 +249,8 @@ def validate(meta: Metadata, scenario: Scenario) -> list[Issue]:
             err("value", "A percentage change must be greater than −100%.")
         if a.method == "set":
             if unit in ("ratio", "rate"):
-                if not (-1 < v < 1) or (a.driver in ("member_cost_share", "opex_volume_scaling") and not 0 <= v <= 1):
+                if not (-1 < v < 1) or (a.driver in ("member_cost_share", "opex_volume_scaling", "routing_share")
+                                         and not 0 <= v <= 1):
                     err("value", "Enter a rate between 0% and 100% (margins between −100% and 100%).")
             elif v < 0:
                 err("value", "A set value cannot be negative.")
@@ -276,7 +287,7 @@ def validate(meta: Metadata, scenario: Scenario) -> list[Issue]:
 def _kind_text(kind: str) -> str:
     return {"payer": "payer pools only", "spending": "provider and pharmacy pools only",
             "recipient": "provider and pharmacy pools only", "top_down": "top-down pools only",
-            "funding": "funding sources only"}.get(kind, kind)
+            "funding": "funding sources only", "ownership": "pools with an owned asset only"}.get(kind, kind)
 
 
 # ---------------------------------------------------------------------------
@@ -454,10 +465,16 @@ def apply_scenario(hist: DriverCube, meta: Metadata, scenario: Scenario) -> tupl
         for c in cols:
             if (frames[name][c] < -1e-9).any():
                 issues.append(Issue("error", "result.negative", f"The scenario makes {c.replace('_', ' ')} negative."))
-    for name in ("recipient_margin", "top_down"):
-        mg = frames[name]["margin"]
+    for name, c in (("recipient_margin", "margin"), ("top_down", "margin"), ("ownership", "owned_margin")):
+        if name not in frames:
+            continue
+        mg = frames[name][c]
         if ((mg >= 1) | (mg <= -1)).any():
             issues.append(Issue("error", "result.margin", "The scenario pushes an operating margin beyond ±100%."))
+    if "ownership" in frames:
+        rs = frames["ownership"]["routing_share"]
+        if ((rs < -1e-12) | (rs > 1 + 1e-12)).any():
+            issues.append(Issue("error", "result.routing", "Routing share would leave the 0–100% range."))
 
     for _, a in enabled:
         e = ledger[a.id]
@@ -477,7 +494,7 @@ def apply_scenario(hist: DriverCube, meta: Metadata, scenario: Scenario) -> tupl
     _cross_driver_warnings(enabled, issues)
     new = replace(cube, payer=frames["payer"], spend=frames["spend"], population=frames["population"],
                   supplemental=frames["supplemental"], recipient_margin=frames["recipient_margin"],
-                  top_down=frames["top_down"])
+                  top_down=frames["top_down"], ownership=frames.get("ownership"))
     return new, issues, ledger
 
 
@@ -592,4 +609,10 @@ def preview(hist: DriverCube, meta: Metadata, scenario: Scenario, assumption_id:
     d = d_all.xs(year, level="year") if year in d_all.index.get_level_values("year") else d_all.iloc[0:0]
     out["delta"] = d[(d["revenue"].abs() > 1) | (d["gain"].abs() > 1)]
     out["series"] = d_all.reset_index()          # year × layer Δ revenue / Δ gain, all years
+
+    def owned(res: ModelResult) -> pd.Series:
+        o = res.ownership
+        return o[o["dataset"] == dataset].groupby("year")["owned_gain"].sum()
+
+    out["owned_gain"] = owned(r1.result).sub(owned(r0.result), fill_value=0).fillna(0.0)   # Δ by year
     return out

@@ -241,3 +241,45 @@ def test_growth_section_renders(app, span, metric, focus):
     _ok(app)
     md = " ".join(m.value for m in app.markdown)
     assert "Compound annual growth" in md and f"What drives revenue growth, {span[0]}→{span[1]}" in md
+
+
+@pytest.mark.parametrize("view", ["baseline", "compare"])
+@pytest.mark.parametrize("geo", ["US", "NVL", "NVL-01"])
+def test_value_capture_section(app, example, view, geo):
+    from profit_pools.core.model.scenario import Assumption, Scope, YearRange
+    sc = example.add(Assumption("routing_share", "pp", 0.10, Scope(YearRange(2027, None), dataset="ENTERPRISE",
+                                                                   node_id="PRV_PHYS")))
+    app.session_state[S.K_APPLIED] = sc if view != "baseline" else None
+    app.session_state[S.K_VIEW] = view
+    app.session_state[S.K_DATASET] = "ENTERPRISE"
+    app.session_state[S.K_YEAR] = 2028
+    app.session_state[S.K_GEO] = geo
+    app.session_state[S.K_FOCUS] = None
+    app.session_state[S.K_SELECTED] = None
+    app.run()
+    _ok(app)
+    md = " ".join(m.value for m in app.markdown)
+    if geo == "NVL-01":
+        assert any("tracked by state" in i.value for i in app.info)
+    else:
+        assert "Consolidated gain" in md and "Owned assets" in md
+        if view == "compare":
+            assert "Δ gain" in md
+    app.session_state[S.K_GEO] = "US"
+    app.session_state[S.K_DATASET] = "MARKET"
+
+
+@pytest.mark.parametrize("scenario", [False, True])
+def test_export_menu(app, example, scenario):
+    app.session_state[S.K_APPLIED] = example if scenario else None
+    app.session_state[S.K_VIEW] = "compare" if scenario else "baseline"
+    app.session_state[S.K_DATASET] = "MARKET"
+    app.session_state[S.K_GEO] = "US"
+    app.run()
+    _ok(app)
+    dl = app.get("download_button")
+    labels = [d.proto.label for d in dl]
+    assert {"CSV · rows behind this view", "Scenario outputs · ZIP of CSVs", "Scenario JSON",
+            "HTML snapshot", "PowerPoint summary"} <= set(labels)
+    js = next(d for d in dl if d.proto.label == "Scenario JSON")
+    assert js.proto.disabled == (not scenario)      # no dead control: disabled with a reason

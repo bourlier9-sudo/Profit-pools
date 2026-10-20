@@ -6,6 +6,7 @@ import streamlit as st
 
 from profit_pools.core.data.adapters import DataAdapter
 from profit_pools.core.taxonomy import Metadata
+from profit_pools.export import csv_export, html_snapshot, pptx_summary
 from profit_pools.shell import grouping_editor, scenario_builder
 from profit_pools.shell import state as S
 
@@ -48,8 +49,9 @@ def _on_dataset_change(meta: Metadata) -> None:
         S.set_selected(None)
 
 
-def global_bar(meta: Metadata) -> None:
-    """Sticky, wrapping control row (wraps instead of clipping on narrower screens)."""
+def global_bar(meta: Metadata):
+    """Sticky, wrapping control row (wraps instead of clipping on narrower screens). Returns the slot
+    the page fills with the Export menu once the results it exports are known."""
     with st.container(key="pp_globalbar", horizontal=True, wrap=True, vertical_alignment="bottom", gap="medium"):
         st.segmented_control(
             "Dataset", list(meta.datasets), key=S.K_DATASET, required=True,
@@ -81,3 +83,38 @@ def global_bar(meta: Metadata) -> None:
                      type="primary" if active else "secondary",
                      help="Open the scenario builder (assumptions apply to every chart)."):
             scenario_builder.open_builder(meta)
+        return st.container(width="content")
+
+
+def export_menu(ctx) -> None:
+    """Downloads for the current view. Files are generated only when clicked (callable data)."""
+    with st.popover("Export", icon=":material/download:"):
+        st.caption(ctx.title())
+        st.download_button("CSV · rows behind this view", data=lambda: csv_export.analysis_csv(ctx),
+                           file_name=f"profit_pools_{ctx.slug()}.csv", mime="text/csv", key="pp.x.csv",
+                           on_click="ignore", width="stretch", icon=":material/table:",
+                           help="Pools in the current scope with revenue, gain, margin, enrollment"
+                                + (" and Δ vs baseline." if ctx.compare is not None else "."))
+        st.download_button("Scenario outputs · ZIP of CSVs", data=lambda: csv_export.scenario_zip(ctx),
+                           file_name=f"profit_pools_outputs_{ctx.slug()}.zip", mime="application/zip",
+                           key="pp.x.zip", on_click="ignore", width="stretch", icon=":material/folder_zip:",
+                           help="Pool, flow and ownership results for every year at state × pool grain"
+                                + (", baseline vs scenario." if ctx.has_scenario else " (baseline; no scenario applied)."))
+        st.download_button("Scenario JSON", data=(ctx.scenario.to_json() if ctx.has_scenario else ""),
+                           file_name="scenario.json", mime="application/json", key="pp.x.json", on_click="ignore",
+                           width="stretch", icon=":material/data_object:", disabled=not ctx.has_scenario,
+                           help="Assumptions only, no data." if ctx.has_scenario else
+                           "Apply a scenario (and show it) to export its assumptions.")
+        st.download_button("HTML snapshot", data=lambda: html_snapshot.build_bytes(ctx),
+                           file_name=f"profit_pools_{ctx.slug()}.html", mime="text/html", key="pp.x.html",
+                           on_click="ignore", width="stretch", icon=":material/web:",
+                           help="Self-contained page with the KPIs, charts and tables of this view. Opens offline; "
+                                "it is a snapshot, not a simulator.")
+        if pptx_summary.available():
+            st.download_button("PowerPoint summary", data=lambda: pptx_summary.build(ctx),
+                               file_name=f"profit_pools_{ctx.slug()}.pptx",
+                               mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                               key="pp.x.pptx", on_click="ignore", width="stretch", icon=":material/slideshow:",
+                               help="Editable slides: KPIs, Marimekko (native shapes), trend, growth drivers, "
+                                    "flows, scenario and value capture.")
+        st.caption("All exports use fictional data and contain no credentials.")

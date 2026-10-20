@@ -9,11 +9,11 @@ Status legend: ✅ done · 🔄 in progress · ⏳ planned
 | 2 | Baseline driver cube, forecast projection, engine (no assumptions), roll-ups, geography, coverage, `ModelResult` | ✅ |
 | 3 | App shell, design system, KPI strip, **Marimekko and drilldown**, trends and detail (Section B); allowed / paid / consumer spend | ✅ |
 | 4 | Scenario engine: assumptions, hierarchical resolution, validation, ledger, bridge. Builder dialog. Compare mode | ✅ |
-| 4b | Ownership and value capture: integrated org, owned asset routing, consolidation | ⏳ |
+| 4b | Ownership and value capture: integrated org, owned asset routing, consolidation | ✅ |
 | 5 | Sankey with per-dimension granularity, roll-ups, threshold; flow inspector; table view | ✅ |
 | 6 | Growth and CAGR section, indexed growth, revenue-growth drivers, YoY heatmap. Guided assumption builder, Impact-only view, pool groupings | ✅ |
-| 7 | Exports: CSV, scenario JSON import/export, HTML snapshot, PPTX | ⏳ |
-| 8 | Visual polish at 1440px, responsiveness, performance, end-to-end consistency tests | ⏳ |
+| 7 | Exports: CSV, scenario JSON import/export, HTML snapshot, PPTX | ✅ |
+| 8 | Visual polish at 1440px, responsiveness, performance, end-to-end consistency tests | ✅ |
 
 ---
 
@@ -118,7 +118,7 @@ assumptions.
 
 **Known limits (by design, until later phases):**
 * The scenario chip is a static "Baseline · no scenario" indicator (Phase 4).
-* There is no Export menu yet (Phase 7), so nothing is shown rather than a dead control.
+* The Export menu arrived in Phase 7.
 * Driver attribution covers baseline year-over-year change only.
 
 ## Phase 4: scenario engine and builder ✅
@@ -230,21 +230,65 @@ funding sources (group "Government-managed (FFS)"), replaces the single "traditi
 * Impact tiles reconcile to the roll-up delta; size-by-change shares sum to 1.
 * Screenshots reviewed at 1440 and 1024 (builder, impact view, groupings dialog, growth section).
 
-## Phase 7: exports ⏳
+## Phase 4b: ownership and value capture ✅
 
-**Acceptance:**
-* Every export control produces a valid file (tested by parsing it back).
-* JSON round-trips, and bad versions or structures are rejected with messages.
-* The HTML is self-contained.
-* The PPTX opens and contains the native-shape Marimekko.
+**Deliverables:**
+* `config/ownership.yaml`: a fictional integrated organization (the enterprise plan) with four owned assets,
+  each inside one recipient leaf (primary care, behavioral health clinicians, home health, mail-order
+  pharmacy) in named states, with a routing share, a margin offset to the market margin, and a third-party
+  revenue ratio.
+* `core/model/ownership.py`: the ownership driver frame (asset × state × year, built in `project()`), the
+  engine stage `value_capture()` (stage 10) and `consolidate()`. `ModelResult.ownership` carries the result.
+* Two scenario drivers, consumed only by stage 10: **routing_share** ("Share of our members' care delivered
+  by owned assets") and **owned_margin**. Enterprise only, state grain, pools containing an owned asset only.
+  The guided builder offers them on those pools.
+* `views.ownership_view()` and the **Value capture** section (Enterprise dataset): consolidated revenue,
+  gain and margin; the consolidation bridge (plan revenue + owned revenue − eliminated intra-organization
+  claims); an owned-asset table with owned vs market margin; Δ vs baseline in Compare.
+* Tests: definitions, enterprise spend = flows, consolidation identities at national and state grain,
+  county = unavailable, routing changes only ownership (pools identical), owned margin and provider margin
+  never cross-apply, spending assumptions flow through to owned assets, validation codes.
 
-## Phase 8: polish ⏳
+**Acceptance (met):**
+* Consolidated gain = plan gain + owned gain; consolidated revenue − expense = gain (elimination nets out).
+* Routing never changes spending, pool revenue or pool gain.
 
-**Acceptance:**
-* Playwright screenshots at 1440 and 1024 are reviewed.
-* End-to-end tests prove that one scenario changes the Marimekko, Sankey, KPI and growth views
-  consistently.
-* A cold start renders in under 3 seconds.
+## Phase 7: exports ✅
+
+**Deliverables:**
+* `profit_pools/export/` (outside `core`, because it uses the chart builders): `ExportContext` mirrors the
+  current filters; `csv_export` (rows behind the view; ZIP of pool, flow and ownership results at state ×
+  leaf grain for every year, baseline / scenario / Δ, README and scenario JSON); `html_snapshot`
+  (self-contained, Plotly inlined once, labelled "not a simulator"); `pptx_summary` (python-pptx native
+  KPI boxes, Marimekko as one shape per tile with the app's own tile colours, native line and bar charts,
+  flow, scenario and value-capture tables).
+* Export menu in the global bar. Files are generated only when clicked (callable download data). Scenario
+  JSON is disabled with a reason when no scenario is shown; PPTX is hidden if python-pptx is missing.
+* `charts/marimekko.tile_fill()` is shared by the chart and the PPTX so colours never diverge.
+
+**Acceptance (met):**
+* Every export parses back to the workspace's numbers (CSV = roll-up; ZIP totals = engine totals; scenario
+  JSON round-trips).
+* The HTML loads nothing from the network. The PPTX opens, has one native shape per Marimekko tile, and
+  native charts. Slides were rendered and reviewed (LibreOffice → PDF).
+
+## Phase 8: polish ✅
+
+**Deliverables:**
+* Performance: memoized node × year aggregate per result (`views._agg`), vectorized `_finish`, cached
+  ancestor maps, vectorized forecast-rate lookup. Measured in AppTest: cold start 2.9 s (was 6.4 s
+  profiled), warm rerun 0.5 s, Compare 0.9 s; first application of a 5-assumption scenario 3.5 s (the
+  sequential attribution runs the engine once per assumption, then is cached).
+* `tests/test_consistency.py`: one scenario agrees across KPIs, Marimekko, roll-up, CSV, Sankey, trends,
+  growth bridge, attribution (sums to the KPI Δ), impact tiles and pool groupings; the memo never serves
+  stale sums for a new result.
+* Layout checked at 1440 and 1024: Value capture KPIs and asset table simplified so nothing truncates.
+* **501 tests total.**
+
+**Acceptance (met):**
+* Screenshots reviewed at 1440 and 1024.
+* One scenario changes the Marimekko, Sankey, KPIs, growth and exports consistently (tested).
+* Cold start under 3 seconds.
 
 ---
 
@@ -273,4 +317,6 @@ funding sources (group "Government-managed (FFS)"), replaces the single "traditi
 | 2026-10-20 | **Decided (user):** assumptions are worded as trends with an explicit payer (e.g. "reimbursement rate trend paid by plans"), never as "increase pool revenue", so cascading effects are implied. |
 | 2026-10-20 | **Decided (user):** no Excel-style expert table. Pool groupings use simple native controls instead of drag-and-drop (MVP, low processing cost). |
 | 2026-10-20 | **Decided (user):** the standard taxonomy follows the public industry profit-pool framework (sector → sub-pools); all values stay fictional. |
+| 2026-10-20 | Ownership: routing moves enterprise members' care to owned assets inside the same pool, so spending and pool revenue never change; only who keeps the gain does. Owned margin = market margin + an asset offset, adjustable only by its own driver. |
+| 2026-10-20 | Exports live outside `core` (they use chart builders) and are generated on click. |
 | 2026-10-20 | Impact-only "one assumption on its own" runs that assumption alone against the baseline (standalone effect). The sequential bridge remains the attribution that sums to the full scenario. |
