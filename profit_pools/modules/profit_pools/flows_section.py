@@ -6,12 +6,12 @@ synchronized through the flow table (row selection) and a node selector.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
 from profit_pools.charts import sankey
 from profit_pools.core.model import flows_view as FV
+from profit_pools.core.model import views as V
 from profit_pools.core.model.views import Geo
 from profit_pools.core.taxonomy import Metadata
 from profit_pools.design import components as ui
@@ -20,16 +20,19 @@ from profit_pools.design.theme import PLOTLY_CONFIG
 from profit_pools.shell import state as S
 
 K = "pp.sk."
-DEPTH_LABELS = ["Layer", "Level 1", "Level 2", "Level 3", "Level 4"]
 SOURCE_MODES = {"group": ("source_group",), "detail": ("source_detail",), "both": ("source_group", "source_detail")}
 SOURCE_MODE_LABELS = {"group": "Groups", "detail": "Detail", "both": "Groups → detail"}
 
 
 def _init(meta: Metadata) -> None:
+    ss = st.session_state
     for k, v in {"metric": "allowed", "sources": "group", "depth": 1, "layer_col": False, "expand": [],
                  "src_filter": [], "rec_filter": [], "min_share": 0.5, "consumer": False, "sel": None,
                  "show": "chart"}.items():
-        st.session_state.setdefault(K + k, v)
+        ss.setdefault(K + k, v)
+    for k in ("expand", "rec_filter"):    # drop pools that the active grouping no longer has
+        if any(n not in meta.taxonomy for n in ss[K + k]):
+            ss[K + k] = [n for n in ss[K + k] if n in meta.taxonomy]
 
 
 def _config(meta: Metadata) -> FV.SankeyConfig:
@@ -51,9 +54,10 @@ def _source_filter_options(meta: Metadata, dataset: str) -> list[str]:
     return out
 
 
-def _recipient_nodes(meta: Metadata, dataset: str, max_depth: int = 2) -> list[str]:
+def _recipient_nodes(meta: Metadata, dataset: str, max_depth: int | None = None) -> list[str]:
+    """Groups that receive flows, down to `max_depth` (default: every level of the active taxonomy)."""
     return [n.id for n in meta.taxonomy
-            if n.depth <= max_depth and not n.is_leaf and meta.in_dataset(n.id, dataset)
+            if (max_depth is None or n.depth <= max_depth) and not n.is_leaf and meta.in_dataset(n.id, dataset)
             and any(l.receives_flows for l in meta.taxonomy.leaves(n.id))]
 
 
@@ -74,8 +78,10 @@ def _controls(meta: Metadata, f: S.Filters) -> None:
                              format_func=SOURCE_MODE_LABELS.get,
                              help="Payer LOB groups and funding groups, individual LOBs and sources, or both columns.")
         max_d = meta.max_levels
+        if ss[K + "depth"] > max_d:      # a deeper pool grouping was just removed
+            ss[K + "depth"] = max_d
         st.select_slider("Recipient detail", options=list(range(max_d + 1)), key=K + "depth",
-                         format_func=lambda d: DEPTH_LABELS[d], width=260,
+                         format_func=lambda d: "Layer" if d == 0 else f"Level {d}", width=260,
                          help="Depth of the recipient hierarchy. Use Expand to open individual pools further.")
         st.toggle("Layer column", key=K + "layer_col", disabled=ss[K + "depth"] == 0,
                   help="Adds a Provider / Pharmacy column before the recipients.")
@@ -83,7 +89,7 @@ def _controls(meta: Metadata, f: S.Filters) -> None:
                   help="Moves member cost sharing and self-pay out of each source into one 'Consumers' source "
                        "(allowed metric only). Totals are unchanged.")
         with st.popover("Filters & detail", icon=":material/filter_list:"):
-            st.multiselect("Expand recipients", _recipient_nodes(meta, f.dataset, 3), key=K + "expand",
+            st.multiselect("Expand recipients", _recipient_nodes(meta, f.dataset), key=K + "expand",
                            format_func=lambda n: _indent(meta, n), placeholder="e.g. Hospitals",
                            help="Shows the chosen pools one level deeper (repeat to go further).")
             st.multiselect("Only these sources", _source_filter_options(meta, f.dataset), key=K + "src_filter",
@@ -228,15 +234,21 @@ def section_flows(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> N
     sel = ss.get(K + "sel")
     sel_id = (f"{sel[1]}→{sel[2]}" if sel[0] == "link" else sel[1]) if sel else None
     if ss[K + "show"] == "chart":
-        st.plotly_chart(sankey.build(view, meta, delta=delta, selected=sel_id), config=PLOTLY_CONFIG,
-                        key="pp.sankey")
+        if f.view == "impact" and delta is not None and not (delta.abs() >= V.IMPACT_MIN).any():
+            st.info(f"The scenario does not change these flows in {f.year}.")
+        else:
+            st.plotly_chart(sankey.build(view, meta, delta=delta, selected=sel_id, impact=f.view == "impact",
+                                         impact_min=V.IMPACT_MIN), config=PLOTLY_CONFIG, key="pp.sankey")
     notes = [f"Total {metric_label.lower()}: {fmt.money(view.total)} — every column sums to this total."]
     if cfg.metric != "gain":
         notes.append("Recipient revenue = payer claims + uninsured + government FFS + supplemental "
                      "(market). Top-down pools (manufacturer, health services, PBM services) have no flows.")
     else:
         notes.append("Link width is |gain|; red links are losses. Node totals are net.")
-    if delta is not None:
+    if f.view == "impact":
+        notes = [f"Impact only: link width is the size of the change in {metric_label.lower()} vs baseline "
+                 f"(teal up, red down); unchanged flows are hidden. Node labels show the net change."]
+    elif delta is not None:
         notes.append("Compare view: link color shows the % change vs baseline (red down, teal up, ±10% = full color).")
     st.markdown("".join(ui.note(n) for n in notes + view.notes), unsafe_allow_html=True)
 

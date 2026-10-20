@@ -19,7 +19,7 @@ import plotly.graph_objects as go
 
 from profit_pools.design import format as fmt
 from profit_pools.design.theme import TEMPLATE_NAME
-from profit_pools.design.tokens import CHART, COLOR, delta_margin_color, margin_color, text_on
+from profit_pools.design.tokens import CHART, COLOR, delta_margin_color, diverging, margin_color, text_on
 
 COL_GAP = 0.0035   # horizontal gap between columns (fraction of width)
 ROW_GAP = 0.004    # vertical gap between tiles
@@ -32,10 +32,10 @@ class TileRef:
     seg_node_id: str | None
 
 
-def _hover(r, col_label: str, basis_label: str, est: bool, extra: str) -> str:
+def _hover(r, col_label: str, basis_label: str, est: bool, extra: str, share: bool = True) -> str:
     lines = [f"<b>{r.seg_label}</b>" + (f"  <span style='color:{COLOR['ink_3']}'>in {col_label}</span>"
                                          if r.seg_label != col_label else "")]
-    lines.append(f"{basis_label} {fmt.money(r.revenue)}  ·  {fmt.pct(r.share_in_col)} of column")
+    lines.append(f"{basis_label} {fmt.money(r.revenue)}" + (f"  ·  {fmt.pct(r.share_in_col)} of column" if share else ""))
     if r.revenue_with_margin > 0:
         lines.append(f"Operating gain {fmt.money(r.gain)}  ·  margin {fmt.pct(r.margin)}")
         if r.margin_coverage < 0.999:
@@ -53,9 +53,14 @@ def _hover(r, col_label: str, basis_label: str, est: bool, extra: str) -> str:
 
 def build(tiles: pd.DataFrame, col_labels: dict[str, str], *, selected: TileRef | None = None,
           estimate_cols: set[str] = frozenset(), basis_label: str = "Revenue",
-          height: int | None = None, color_by: str = "margin") -> tuple[go.Figure, list[TileRef]]:
-    """`tiles` may carry d_revenue / d_gain / d_margin (scenario − baseline) for the compare view."""
-    """Return the figure and the tile reference for each bar point (in trace order)."""
+          height: int | None = None, color_by: str = "margin", impact_metric: str = "d_gain",
+          impact_min: float = 0.5e6, x_title: str = "Share of revenue (column width)"
+          ) -> tuple[go.Figure, list[TileRef]]:
+    """Return the figure and the tile reference for each bar point (in trace order).
+
+    `tiles` may carry d_revenue / d_gain / d_margin (scenario − baseline). color_by: "margin",
+    "delta_margin", or "impact" (sign and size of `impact_metric`; tiles below `impact_min` are greyed).
+    """
     if tiles.empty:
         fig = go.Figure(layout=dict(template=TEMPLATE_NAME, height=height or CHART["marimekko_height"]))
         return fig, []
@@ -63,6 +68,7 @@ def build(tiles: pd.DataFrame, col_labels: dict[str, str], *, selected: TileRef 
     cols = tiles.drop_duplicates("col_id")[["col_id", "col_share", "col_revenue"]].reset_index(drop=True)
     cols["x0"] = cols["col_share"].cumsum() - cols["col_share"]
     pos = cols.set_index("col_id")
+    scale = float(tiles[impact_metric].abs().max()) if color_by == "impact" else 0.0
 
     xs, ws, bases, hs, colors, patterns, texts, tcolors, hovers, refs = ([] for _ in range(10))
     for col_id, g in tiles.groupby("col_id", sort=False):
@@ -73,7 +79,13 @@ def build(tiles: pd.DataFrame, col_labels: dict[str, str], *, selected: TileRef 
             h = r.share_in_col
             y0 = top - h
             has_d = hasattr(r, "d_margin")
-            if color_by == "delta_margin" and has_d:
+            d_imp = getattr(r, impact_metric, 0.0) if color_by == "impact" else 0.0
+            affected = color_by == "impact" and abs(d_imp) >= impact_min
+            if color_by == "impact":
+                # sqrt + floor so a small change still reads as changed next to a large one
+                t = np.sign(d_imp) * (0.25 + 0.75 * np.sqrt(abs(d_imp) / scale)) if scale > 0 else 0.0
+                fill = diverging(float(t)) if affected else COLOR["line"]
+            elif color_by == "delta_margin" and has_d:
                 fill = delta_margin_color(r.d_margin if r.revenue_with_margin > 0 else None)
             else:
                 fill = margin_color(r.margin if r.revenue_with_margin > 0 else None)
@@ -82,17 +94,22 @@ def build(tiles: pd.DataFrame, col_labels: dict[str, str], *, selected: TileRef 
             bases.append(y0 + ROW_GAP / 2)
             hs.append(max(h - ROW_GAP, h * 0.5))
             colors.append(fill)
-            patterns.append("/" if r.revenue_with_margin <= 0 else "")
+            patterns.append("/" if r.revenue_with_margin <= 0 and color_by != "impact" else "")
             est = col_id in estimate_cols
             label = f"{r.seg_label}{' · est.' if est else ''}"
-            texts.append(f"{label}<br>{fmt.money(r.revenue)}" if h > 0.09 else label)
-            tcolors.append(text_on(fill))
+            if color_by == "impact":
+                value = fmt.money(d_imp, signed=True) if affected else "no change"
+                texts.append(f"{label}<br>{value}" if h > 0.09 else label)
+                tcolors.append(text_on(fill) if affected else COLOR["ink_3"])
+            else:
+                texts.append(f"{label}<br>{fmt.money(r.revenue)}" if h > 0.09 else label)
+                tcolors.append(text_on(fill))
             extra = ""
             if has_d:
                 extra = (f"<span style='color:{COLOR['accent']}'><b>vs baseline</b>  revenue "
                          f"{fmt.money(r.d_revenue, signed=True)} · gain {fmt.money(r.d_gain, signed=True)} · "
                          f"margin {fmt.pp(r.d_margin)}</span>")
-            hovers.append(_hover(r, col_labels.get(col_id, col_id), basis_label, est, extra))
+            hovers.append(_hover(r, col_labels.get(col_id, col_id), basis_label, est, extra, color_by != "impact"))
             refs.append(TileRef(col_id, r.seg_key, r.seg_node_id))
             top = y0
 
@@ -136,7 +153,7 @@ def build(tiles: pd.DataFrame, col_labels: dict[str, str], *, selected: TileRef 
         bargap=0, margin=dict(t=30, r=16, b=36, l=44), annotations=annotations, shapes=shapes,
         uniformtext=dict(minsize=9, mode="hide"), clickmode="event+select", dragmode=False,
         xaxis=dict(range=[0, 1], tickformat=".0%", tickvals=[0, .25, .5, .75, 1], fixedrange=True,
-                   title=dict(text="Share of revenue (column width)", standoff=6, font=dict(color=COLOR["ink_3"]))),
+                   title=dict(text=x_title, standoff=6, font=dict(color=COLOR["ink_3"]))),
         yaxis=dict(range=[0, 1.0], tickformat=".0%", tickvals=[0, .25, .5, .75, 1], fixedrange=True,
                    showgrid=False, title=dict(text="Share within column", standoff=4, font=dict(color=COLOR["ink_3"]))),
     )

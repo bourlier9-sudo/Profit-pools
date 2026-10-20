@@ -11,7 +11,7 @@ Status legend: ✅ done · 🔄 in progress · ⏳ planned
 | 4 | Scenario engine: assumptions, hierarchical resolution, validation, ledger, bridge. Builder dialog. Compare mode | ✅ |
 | 4b | Ownership and value capture: integrated org, owned asset routing, consolidation | ⏳ |
 | 5 | Sankey with per-dimension granularity, roll-ups, threshold; flow inspector; table view | ✅ |
-| 6 | Growth and CAGR section, baseline vs scenario, driver waterfall | ⏳ |
+| 6 | Growth and CAGR section, indexed growth, revenue-growth drivers, YoY heatmap. Guided assumption builder, Impact-only view, pool groupings | ✅ |
 | 7 | Exports: CSV, scenario JSON import/export, HTML snapshot, PPTX | ⏳ |
 | 8 | Visual polish at 1440px, responsiveness, performance, end-to-end consistency tests | ⏳ |
 
@@ -190,12 +190,45 @@ funding sources (group "Government-managed (FFS)"), replaces the single "traditi
 * The table selection drives the inspector, verified in Chromium.
 * Compare colouring follows the scenario (Commercial and MA up, Medicaid down in the example).
 
-## Phase 6: growth ⏳
+## Phase 6: growth, guided assumptions, impact view, pool groupings ✅
 
-**Acceptance:**
-* Growth assumptions change forecast years everywhere.
-* Realized CAGRs are recomputed from results, with "n/m" handling.
-* The waterfall reconciles.
+**Deliverables:**
+* **Standard taxonomy refresh** (public industry framework used for structure only; all figures fictional):
+  Health Services & Technology (HST) = Software & platforms (payer platforms, provider software), Data &
+  analytics, Tech-enabled services (RCM, care management, enablement), Behavioral health services.
+  Pharmacy = Pharmacy Services & Dispensing; Manufacturer = Life Sciences Manufacturers.
+* **Guided assumption builder** (`shell/assumption_wizard.py`): Where (pool at any level, or a funder) →
+  What (Enrollment / Financials / Growth; only levers valid for that pool) → How much & when (value, years,
+  optional linear **phase-in**). Levers are worded as trends with an explicit payer and payee ("Reimbursement
+  rate trend — price paid per service", paid by …), and each shows a plain-English sentence of who pays whom
+  plus the driver's `explains` line, so cascades are never hidden. Live preview: Δ gain by layer per year.
+  Replaces the old driver form; the Excel-style expert table was dropped (user decision).
+* **Impact-only view** (View → Impact only): greys every pool the scenario does not touch and shows only the
+  change. "Impact of" runs all assumptions or **one assumption on its own** against the baseline. Tile size
+  = pool size or size of change (`views.impact_layout`); measure = Δ gain or Δ revenue. KPIs, trends (Δ by
+  year), the Sankey (link width = |Δ|, teal up / red down) and tables all show deltas.
+* **Growth & forecasting section** (`core/model/growth.py`, `growth_section.py`): indexed growth (start
+  year = 100) with baseline overlay; CAGR table (history, chosen period, baseline, gain CAGR, Δ margin);
+  **revenue-growth bridge** splitting the change into plan enrollment, premium rate, members covered,
+  utilization, price per service, spend per member, uninsured & government FFS, supplemental, top-down
+  growth and mix; YoY heatmap on the shared diverging scale.
+* **Pool groupings** (`core/grouping.py`, `shell/grouping_editor.py`): a separate dialog to rename pools,
+  move them under another group and add groups, with native controls (no drag-and-drop, user decision).
+  Draft vs apply, reset to standard, JSON import/export. Invalid moves (into a data-holding pool, into its
+  own subtree, payer segments out of Payer) are never offered and are refused by the core. Values never
+  change under a grouping; only roll-ups and labels do. Every cached result is keyed by the grouping.
+* Fixed: Sankey depth labels were a fixed list (broke under deeper groupings); the margin legend's neutral
+  tick now sits at the true 0% position.
+* Tests: wizard (1,576 pool × lever combinations validate and round-trip), growth bridge reconciliation at
+  every grain, impact layout identities, grouping editor and grouped workspace (AppTest). **446 tests total.**
+
+**Acceptance (met):**
+* Every lever the builder offers validates and matches data; pharmacy never offers volume levers; the
+  enterprise never offers market-only funders.
+* The growth bridge sums exactly to the change in revenue (residual 0) for every node, dataset and geography
+  tested; a price assumption lands in "Price per service" only.
+* Impact tiles reconcile to the roll-up delta; size-by-change shares sum to 1.
+* Screenshots reviewed at 1440 and 1024 (builder, impact view, groupings dialog, growth section).
 
 ## Phase 7: exports ⏳
 
@@ -237,3 +270,7 @@ funding sources (group "Government-managed (FFS)"), replaces the single "traditi
 | 2026-10-18 | **Confirmed (user):** enterprise recipient gain = enterprise spend × the pool's market margin. |
 | 2026-10-18 | **Revised (user):** government-managed insurance is split into Medicare FFS and Medicaid FFS funding sources. |
 | 2026-10-18 | PPTX via python-pptx native charts and shapes. No Kaleido or Chrome dependency. |
+| 2026-10-20 | **Decided (user):** assumptions are worded as trends with an explicit payer (e.g. "reimbursement rate trend paid by plans"), never as "increase pool revenue", so cascading effects are implied. |
+| 2026-10-20 | **Decided (user):** no Excel-style expert table. Pool groupings use simple native controls instead of drag-and-drop (MVP, low processing cost). |
+| 2026-10-20 | **Decided (user):** the standard taxonomy follows the public industry profit-pool framework (sector → sub-pools); all values stay fictional. |
+| 2026-10-20 | Impact-only "one assumption on its own" runs that assumption alone against the baseline (standalone effect). The sequential bridge remains the attribution that sums to the full scenario. |

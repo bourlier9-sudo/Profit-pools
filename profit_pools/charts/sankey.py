@@ -41,7 +41,11 @@ def node_color(meta: Metadata, column: str, key: str) -> str:
 
 
 def build(view: SankeyView, meta: Metadata, *, delta: pd.Series | None = None, height: int | None = None,
-          selected: str | None = None) -> go.Figure:
+          selected: str | None = None, impact: bool = False, impact_min: float = 0.5e6) -> go.Figure:
+    """`impact`: draw only the change — link width = |Δ| vs baseline (teal up, red down); unchanged links
+    and nodes drop out. Node labels then show the net Δ through each node (outflow, or inflow at the end)."""
+    if impact and delta is not None:
+        return _impact(view, meta, delta, height, impact_min)
     nodes = view.nodes.reset_index(drop=True)
     idx = {nid: i for i, nid in enumerate(nodes["node_id"])}
     total = view.total or 1.0
@@ -82,5 +86,37 @@ def build(view: SankeyView, meta: Metadata, *, delta: pd.Series | None = None, h
                   customdata=link_hover, hovertemplate="%{customdata}<extra></extra>"),
     ))
     fig.update_layout(template=TEMPLATE_NAME, height=height or max(460, min(900, 30 * int(per_col) + 120)),
+                      margin=dict(t=8, r=8, b=8, l=8), font=dict(size=12, color=COLOR["ink_1"]))
+    return fig
+
+
+def _impact(view: SankeyView, meta: Metadata, delta: pd.Series, height: int | None, impact_min: float) -> go.Figure:
+    links = view.links.assign(d=delta.to_numpy()).reset_index(drop=True)
+    links = links[links["d"].abs() >= impact_min]
+    if links.empty:
+        return go.Figure(layout=dict(template=TEMPLATE_NAME, height=height or 200))
+    nodes = view.nodes[view.nodes["node_id"].isin(set(links["source"]) | set(links["target"]))].reset_index(drop=True)
+    idx = {nid: i for i, nid in enumerate(nodes["node_id"])}
+    out_d = links.groupby("source")["d"].sum()
+    in_d = links.groupby("target")["d"].sum()
+    node_d = [out_d.get(n, in_d.get(n, 0.0)) for n in nodes["node_id"]]
+    colors = [node_color(meta, c, k) for c, k in zip(nodes["column"], nodes["key"])]
+    labels = [f"{l}  {fmt.money(d, signed=True)}" for l, d in zip(nodes["label"], node_d)]
+    nl = nodes.set_index("node_id")["label"]
+    hover = [f"<b>{nl[a]} → {nl[b]}</b><br>Change vs baseline {fmt.money(d, signed=True)}"
+             + (f" ({fmt.pct(d / (v - d), 1, signed=True)})" if abs(v - d) > 0 else "")
+             + f"<br>Scenario {fmt.money(v)}"
+             for a, b, v, d in zip(links["source"], links["target"], links["value"], links["d"])]
+    lcolors = [_rgba(COLOR["accent"] if d > 0 else COLOR["bad"], 0.5) for d in links["d"]]
+    per_col = nodes.groupby("column").size().max()
+    fig = go.Figure(go.Sankey(
+        arrangement="snap", valueformat=",.0f",
+        node=dict(label=labels, color=colors, pad=12, thickness=14, line=dict(width=0),
+                  hovertemplate="%{label}<extra></extra>"),
+        link=dict(source=[idx[a] for a in links["source"]], target=[idx[b] for b in links["target"]],
+                  value=links["d"].abs().tolist(), color=lcolors, customdata=hover,
+                  hovertemplate="%{customdata}<extra></extra>"),
+    ))
+    fig.update_layout(template=TEMPLATE_NAME, height=height or max(360, min(900, 30 * int(per_col) + 120)),
                       margin=dict(t=8, r=8, b=8, l=8), font=dict(size=12, color=COLOR["ink_1"]))
     return fig

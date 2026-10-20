@@ -365,6 +365,43 @@ def marimekko_tiles(result: ModelResult, meta: Metadata, dataset: str, year: int
     return RollupView(parent_id, seg[keep], cols.unavailable, notes)
 
 
+IMPACT_MIN = 0.5e6   # $0.5M: below this a tile counts as unaffected (display rounding is $0.1B / $1M)
+
+
+def compare_tiles(result: ModelResult, base: ModelResult, meta: Metadata, dataset: str, year: int,
+                  parent_id: str | None = None, geo: Geo = Geo(), basis: str = "allowed",
+                  segment_by: str = "hierarchy") -> RollupView:
+    """Scenario tiles plus d_revenue / d_gain / d_margin (scenario − baseline) per tile."""
+    cur = marimekko_tiles(result, meta, dataset, year, parent_id, geo, basis, segment_by)
+    rows = cur.rows
+    if rows.empty:
+        return cur
+    bt = marimekko_tiles(base, meta, dataset, year, parent_id, geo, basis, segment_by).rows
+    bt = bt.set_index(["col_id", "seg_key"])[["revenue", "gain", "margin"]]
+    j = rows.join(bt, on=["col_id", "seg_key"], rsuffix="_b")
+    rows = rows.assign(d_revenue=j["revenue"] - j["revenue_b"].fillna(0),
+                       d_gain=j["gain"].fillna(0) - j["gain_b"].fillna(0),
+                       d_margin=j["margin"] - j["margin_b"])
+    return RollupView(cur.parent_id, rows, cur.unavailable, cur.notes)
+
+
+def impact_layout(rows: pd.DataFrame, metric: str = "d_gain") -> pd.DataFrame:
+    """Re-lay compare tiles so area ∝ |Δ metric|: column width = column Σ|Δ| / total Σ|Δ|, height = tile
+    |Δ| / column Σ|Δ|. Increases and decreases both take space; unaffected tiles drop out. The deltas
+    themselves are untouched (they come from the engine)."""
+    mag = rows[metric].abs().where(rows[metric].abs() >= IMPACT_MIN, 0.0)
+    out = rows.assign(impact=mag)[mag > 0].copy()
+    if out.empty:
+        return out
+    col = out.groupby("col_id", sort=False)["impact"].transform("sum")
+    out["share_in_col"] = out["impact"] / col
+    out["col_share"] = col / out["impact"].sum()
+    out["col_revenue"] = col
+    order = out.groupby("col_id", sort=False)["impact"].sum().sort_values(ascending=False)
+    out["_o"] = out["col_id"].map({c: i for i, c in enumerate(order.index)})
+    return out.sort_values(["_o", "impact"], ascending=[True, False]).drop(columns="_o").reset_index(drop=True)
+
+
 def revenue_components(result: ModelResult, meta: Metadata, dataset: str, year: int, node_id: str,
                        geo: Geo = Geo()) -> pd.DataFrame:
     """Recipient revenue by funder with paid / consumer split (inspector: how revenue is built)."""

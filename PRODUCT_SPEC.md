@@ -24,7 +24,11 @@ analytical model**:
   is registered. Future modules (Enrollment Intelligence, Quality Intelligence, Healthcare Services
   Analytics) are added by registering them, with no nonfunctional placeholders.
 * A global bar holds **Dataset** (Total market / Enterprise), Year, Geography, View (Baseline / Scenario /
-  Compare), Scope, the Scenario chip and Export.
+  Compare / Impact only), Scope, **Pool groupings**, the Scenario chip and Export.
+  * **Impact only** greys pools the scenario does not touch and shows just the change, for all assumptions
+    or one assumption run on its own; tiles sized by pool or by size of change.
+  * **Pool groupings** (separate from scenarios): rename pools, move them between groups, add groups; reset
+    to the standard taxonomy; import/export JSON. Numbers never change, only the hierarchy.
   * The Enterprise label is configurable and ships as "Enterprise (fictional)".
   * The Enterprise view hides Manufacturer, Health Services and PBM Services.
 * A contextual inspector on the right shows details for the current selection.
@@ -37,7 +41,7 @@ analytical model**:
 | **A. Executive overview** | KPI strip (revenue, operating gain, margin, enrollment, Δ vs prior year or baseline); hero **Marimekko** with drilldown, breadcrumbs, tooltips and coverage notes |
 | **B. Pool trends and detail** | Revenue and gain trends, margin trends, composition change, selected-pool detail, summary table, key drivers of change |
 | **C. Value flows** | Configurable Sankey, flow inspector, tabular alternative |
-| **D. Growth and forecasting** | Baseline vs scenario projections, realized CAGRs, driver bridge |
+| **D. Growth and forecasting** | Indexed growth, CAGR table (history / period / baseline), revenue-growth drivers waterfall, YoY heatmap |
 | **E. Supporting detail and exports** | Full tables, coverage and provenance, downloads |
 
 There is no separate page for assumptions. The assumption builder opens from the scenario chip anywhere.
@@ -90,6 +94,10 @@ There is no separate page for assumptions. The assumption builder opens from the
   * An assumption explicitly set to **Stack** compounds instead (ARCHITECTURE.md §6.2).
 * Only drivers valid for the selected node's economics and data coverage are offered.
 * Invalid inputs produce validation messages and block apply. Results never silently go inconsistent.
+* **Guided assumptions:** Where (pool or funder) → What (Enrollment / Financials / Growth) → How much & when
+  (with optional phase-in). Levers are worded as trends with an explicit payer, e.g. "Reimbursement rate
+  trend — price paid per service, paid by Commercial plans", never "increase hospital revenue", and each
+  shows who pays whom so cascading effects are visible.
 * **Builder UX** (opened as a dialog from the chip "Scenario A · 4 changes"):
   * Create, rename, add, edit, duplicate, enable or disable, delete and reorder assumptions.
   * Each assumption shows a preview of the affected descendants and totals.

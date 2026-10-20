@@ -375,3 +375,54 @@ def test_example_scenario_is_valid_and_runs(hist, m):
     r = run_scenario(hist, m, sc)
     assert r.ok, [i.message for i in r.issues if i.level == "error"]
     assert all(e.status == "applied" for e in r.ledger)
+
+
+def test_phase_in_ramps_linearly(hist, m, base):
+    a = A("provider_margin", "pp", -0.03, "PROVIDER", years=(2026, 2028), phase_in=True)
+    r = ok(hist, m, a)
+    def prov_margin(res, y):
+        p = P(res, year=y)
+        p = p[(p["layer_id"] == "PROVIDER") & p["margin_known"]]
+        return p["gain"].sum() / p["revenue"].sum()
+    for y, frac in ((2026, 1 / 3), (2027, 2 / 3), (2028, 1.0)):
+        assert np.isclose(prov_margin(r, y) - prov_margin(base, y), -0.03 * frac, atol=1e-9)
+    assert np.isclose(prov_margin(r, 2029), prov_margin(base, 2029))          # range ended
+    e = A("enrollment", "pct", 0.10, "PAY_COMM", years=(2027, None), phase_in=True, dataset="MARKET")
+    r2 = ok(hist, m, e)
+    comm = leaves(m, "PAY_COMM")
+    def mem(res, y):
+        p = P(res, year=y)
+        return p[p["node_id"].isin(comm)]["members"].sum()
+    assert np.isclose(mem(r2, 2027) / mem(base, 2027), 1 + 0.10 / 5)         # 2027–2031 → 1/5 in year one
+    assert np.isclose(mem(r2, 2031) / mem(base, 2031), 1.10)
+    bad = run(hist, m, A("enrollment", "set", 1e6, "PAY_COMM", dataset="MARKET", phase_in=True))
+    assert any(i.code == "phase_in" for i in bad.issues)
+
+
+# --- impact view ---------------------------------------------------------------------
+
+def test_impact_tiles_reconcile_and_relayout(m, hist, base):
+    from profit_pools.core.model import views as V
+    sc = Scenario("t", (A("allowed_pmpm", "pct", 0.05, "PRV_HOSP", sources=("COMM",)),))
+    res = run_scenario(hist, m, sc).result
+    rows = V.compare_tiles(res, base, m, "MARKET", Y).rows
+    cur = V.rollup(res, m, "MARKET", Y).rows.set_index("node_id")
+    b = V.rollup(base, m, "MARKET", Y).rows.set_index("node_id")
+    d_col = rows.groupby("col_id")["d_revenue"].sum()
+    assert np.allclose(d_col, (cur["revenue"] - b["revenue"]).reindex(d_col.index))
+    # Plans pay more (gain ↓), hospitals receive more (gain ↑ at constant margin): both columns move.
+    assert d_col["PROVIDER"] > 0 and rows.loc[rows["col_id"] == "PAYER", "d_gain"].sum() < 0
+    lay = V.impact_layout(rows, "d_gain")
+    assert set(lay["col_id"]) == {"PAYER", "PROVIDER"}           # untouched layers drop out
+    assert np.isclose(lay.drop_duplicates("col_id")["col_share"].sum(), 1.0)
+    assert np.allclose(lay.groupby("col_id")["share_in_col"].sum(), 1.0)
+    keep = rows.set_index(["col_id", "seg_key"])["d_gain"]
+    assert np.allclose(lay.set_index(["col_id", "seg_key"])["d_gain"], keep.reindex(
+        lay.set_index(["col_id", "seg_key"]).index))                 # deltas untouched
+
+
+def test_impact_layout_empty_when_nothing_changes(m, base):
+    from profit_pools.core.model import views as V
+    rows = V.compare_tiles(base, base, m, "MARKET", Y).rows
+    assert (rows["d_revenue"] == 0).all()
+    assert V.impact_layout(rows, "d_revenue").empty

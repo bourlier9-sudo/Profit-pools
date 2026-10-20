@@ -13,7 +13,7 @@ def test_levels_follow_source_data_shape(meta):
     depth = {layer: {n.depth for n in tax.leaves(layer)} for layer in tax.layer_ids}
     assert depth["PAYER"] == {2}
     assert depth["MANUFACTURER"] == {2}
-    assert depth["HEALTH_SERVICES"] == {3}
+    assert depth["HEALTH_SERVICES"] == {2, 3}          # ragged
     assert max(depth["PROVIDER"]) == 4 and len(depth["PROVIDER"]) > 1   # ragged
     assert max(depth["PHARMACY"]) == 4 and len(depth["PHARMACY"]) > 1
     assert meta.max_levels == 4
@@ -103,7 +103,7 @@ def test_new_breakdown_is_configuration_only(taxonomy_spec):
 
 def test_tree_supports_any_depth_but_contract_limit_is_enforced(taxonomy_spec):
     hs = next(l for l in taxonomy_spec["layers"] if l["id"] == "HEALTH_SERVICES")
-    um = hs["children"][0]["children"][0]["children"][0]
+    um = hs["children"][0]["children"][0]["children"][0]   # Claims & Core Admin (L3)
     um["children"] = [{"id": "HS_UM_A", "label": "A", "children": [{"id": "HS_UM_A1", "label": "A1"}]}]
     tax = Taxonomy(taxonomy_spec)          # the tree itself has no depth limit
     assert tax["HS_UM_A1"].depth == 5

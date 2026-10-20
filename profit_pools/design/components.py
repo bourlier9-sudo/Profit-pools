@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from html import escape
 
-from profit_pools.design.tokens import DELTA_MARGIN_CLAMP, MARGIN_MAX, MARGIN_MIN
+from profit_pools.design.tokens import COLOR, DELTA_MARGIN_CLAMP, MARGIN_MAX, MARGIN_MIN
 
 
 def page_header(title: str, subtitle: str) -> str:
@@ -47,6 +47,15 @@ def note(text: str) -> str:
     return f'<div class="pp-note">{escape(text)}</div>'
 
 
+def _gradient(ticks: list[str]) -> str:
+    """The diverging gradient with its neutral tick placed where the scale is actually neutral."""
+    z = 100 * -MARGIN_MIN / (MARGIN_MAX - MARGIN_MIN)
+    return ('<span class="pp-grad-wrap"><span class="pp-grad"></span>'
+            f'<span class="pp-grad-ticks"><span>{ticks[0]}</span>'
+            f'<span style="position:absolute;left:{z:.0f}%;transform:translateX(-50%)">{ticks[1]}</span>'
+            f'<span>{ticks[2]}</span></span></span>')
+
+
 def margin_legend(show_estimate: bool = True, delta: bool = False) -> str:
     lo, hi = MARGIN_MIN * 100, MARGIN_MAX * 100
     ticks = [f"≤{lo:.0f}%", "0%", f"≥{hi:.0f}%"]
@@ -59,11 +68,23 @@ def margin_legend(show_estimate: bool = True, delta: bool = False) -> str:
     return (
         '<div class="pp-legend">'
         f'<span class="pp-muted">{title}</span>'
-        '<span class="pp-grad-wrap"><span class="pp-grad"></span>'
-        f'<span class="pp-grad-ticks"><span>{ticks[0]}</span><span>{ticks[1]}</span><span>{ticks[2]}</span></span></span>'
+        f'{_gradient(ticks)}'
         '<span><span class="pp-swatch pp-hatch"></span>Margin unavailable</span>'
         f'{est}'
         '<span class="pp-muted">Width = share of revenue · height = share within column · area ∝ revenue</span>'
+        '</div>'
+    )
+
+
+def impact_legend(metric_label: str, max_abs: str, sized_by_change: bool) -> str:
+    size = ("Area ∝ size of the change (increases and decreases both take space)" if sized_by_change
+            else "Width = share of revenue · height = share within column")
+    return (
+        '<div class="pp-legend">'
+        f'<span class="pp-muted">Change in {metric_label.lower()} (square-root scale)</span>'
+        f'{_gradient([f"−{max_abs}", "0", f"+{max_abs}"])}'
+        f'<span><span class="pp-swatch" style="background:{COLOR["line"]}"></span>Not affected</span>'
+        f'<span class="pp-muted">{size}</span>'
         '</div>'
     )
 

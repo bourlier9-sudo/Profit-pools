@@ -10,13 +10,16 @@ from profit_pools.charts import marimekko, trends
 from profit_pools.core.config import load_config
 from profit_pools.core.model import views as V
 from profit_pools.core.model.engine import ModelResult
+from profit_pools.core.model.scenario import Scenario
+from profit_pools.core.model.scenario_engine import summarize
 from profit_pools.core.model.views import Geo
 from profit_pools.core.taxonomy import Metadata
 from profit_pools.design import components as ui
 from profit_pools.design import format as fmt
 from profit_pools.design.theme import PLOTLY_CONFIG
-from profit_pools.design.tokens import FUNDING_COLOR, LAYER_COLOR
+from profit_pools.design.tokens import LAYER_COLOR
 from profit_pools.modules.profit_pools.flows_section import section_flows
+from profit_pools.modules.profit_pools.growth_section import section_growth
 from profit_pools.shell import data, layout
 from profit_pools.shell import state as S
 
@@ -82,9 +85,19 @@ def _as_result(pools, base_year: int) -> ModelResult:
     return ModelResult(pools=pools, flows=pd.DataFrame(), base_year=base_year)
 
 
+def _active_scenario(view: str) -> Scenario:
+    """The scenario behind the workspace: the applied one, or in Impact view optionally a single
+    assumption run on its own against the baseline."""
+    sc = S.applied()
+    if view != "impact":
+        return sc
+    pick = next((a for a in sc.enabled if a.id == st.session_state.get(S.K_IMPACT_OF)), None)
+    return sc if pick is None else sc.with_assumptions([pick])
+
+
 def _bridge_for(meta: Metadata, f: S.Filters, geo: Geo, node_id: str | None) -> list[tuple]:
     """[(assumption, Δ revenue, Δ gain)] for one node — consecutive differences of the cached bridge."""
-    steps = data.scenario_bridge(S.applied().to_json())
+    steps = data.scenario_bridge(_active_scenario(f.view).to_json(), S.grouping_json())
     vals = []
     for a, pools in steps:
         mtr = V.node_metrics(_as_result(pools, meta.periods.base_year), meta, f.dataset, f.year, node_id, geo, f.basis)
@@ -193,6 +206,57 @@ def _kpis(result, meta, f: S.Filters, geo: Geo, cmp=None) -> None:
                             "provider revenue). Operating gain is additive across sectors."), unsafe_allow_html=True)
 
 
+def _impact_kpis(result, meta, f: S.Filters, geo: Geo, cmp) -> None:
+    cur = V.node_metrics(result, meta, f.dataset, f.year, f.focus, geo, f.basis)
+    base = V.node_metrics(cmp, meta, f.dataset, f.year, f.focus, geo, f.basis)
+    if cur is None or base is None:
+        st.markdown(ui.note("No data for this scope at the selected geography and spend basis."), unsafe_allow_html=True)
+        return
+
+    def dm(k):
+        a, b = cur.get(k), base.get(k)
+        a = a if a is not None and np.isfinite(a) else 0.0
+        b = b if b is not None and np.isfinite(b) else 0.0
+        return a - b, b
+
+    def pct_of(d, b):
+        return ui.delta_html(f"{fmt.pct(d / b, 1, signed=True)} of baseline" if b > 0 else "—", None)
+
+    d_rev, b_rev = dm("revenue")
+    d_gain, b_gain = dm("gain")
+    d_mem, b_mem = dm("members")
+    s = V.node_series(result, meta, f.dataset, f.focus, geo, f.basis).set_index("year")
+    sb = V.node_series(cmp, meta, f.dataset, f.focus, geo, f.basis).set_index("year")
+    b, e = meta.periods.base_year, meta.periods.forecast_end
+    cg = (V.cagr(s["revenue"].get(b), s["revenue"].get(e), e - b) - V.cagr(sb["revenue"].get(b), sb["revenue"].get(e), e - b)
+          if b in s.index and e in s.index and b in sb.index and e in sb.index else np.nan)
+    items = [
+        ("Δ " + S.BASIS_REVENUE_LABEL[f.basis].lower(), fmt.money(d_rev, signed=True), pct_of(d_rev, b_rev)),
+        ("Δ operating gain", fmt.money(d_gain, signed=True), pct_of(d_gain, b_gain)),
+        ("Δ operating margin", fmt.pp(cur["margin"] - base["margin"]), ui.delta_html("vs baseline", None)),
+        ("Δ enrollment", fmt.members(d_mem, signed=True) if b_mem > 0 else fmt.DASH,
+         pct_of(d_mem, b_mem) if b_mem > 0 else ui.delta_html("Payer pools only", None)),
+        (f"Δ revenue CAGR {b}–{str(e)[2:]}", fmt.pp(cg) if np.isfinite(cg) else fmt.DASH, ui.delta_html("vs baseline", None)),
+    ]
+    st.markdown(ui.kpi_strip(items), unsafe_allow_html=True)
+
+
+def _impact_controls(meta: Metadata) -> None:
+    ap = S.applied()
+    opts = [S.IMPACT_ALL, *[a.id for a in ap.enabled]]
+    labels = {S.IMPACT_ALL: f"All {len(ap.enabled)} assumptions together"} | {
+        a.id: f"{i}. {a.label or summarize(meta, a)} (on its own)" for i, a in enumerate(ap.enabled, start=1)}
+    with st.container(horizontal=True, wrap=True, vertical_alignment="bottom", gap="medium"):
+        st.selectbox("Impact of", opts, key=S.K_IMPACT_OF, format_func=labels.get, width=460,
+                     help="One assumption is run on its own against the baseline, so you see only its effect.")
+        st.segmented_control("Measure", list(S.IMPACT_METRIC_LABELS), key=S.K_IMPACT_METRIC, required=True,
+                             format_func=S.IMPACT_METRIC_LABELS.get)
+        st.segmented_control("Tile size", list(S.IMPACT_SIZE_LABELS), key=S.K_IMPACT_SIZE, required=True,
+                             format_func=S.IMPACT_SIZE_LABELS.get, on_change=S.set_selected, args=(None,),
+                             help="Pool size keeps the usual layout and greys pools the scenario does not touch. "
+                                  "Size of change sizes each tile by its absolute change.")
+
+
 def _breadcrumb(meta: Metadata, focus: str | None) -> None:
     path = [None] + ([n.id for n in meta.taxonomy.path(focus)] if focus else [])
     with st.container(key="pp_crumbs", horizontal=True, gap="small", vertical_alignment="center", width="content"):
@@ -213,16 +277,25 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -
                                f"{ds.label} · {yr} · {_geo_text(meta, geo)} · fictional data, for illustration only"),
                 unsafe_allow_html=True)
     st.markdown(ui.section_nav([("overview", "Overview"), ("trends", "Trends & detail"), ("flows", "Value flows"),
-                                ("detail", "Summary table")]),
+                                ("growth", "Growth"), ("detail", "Summary table")]),
                 unsafe_allow_html=True)
     st.markdown('<div id="overview"></div>', unsafe_allow_html=True)
-    if f.view != "baseline":
+    if f.view == "impact":
+        ap = S.applied()
+        st.markdown(ui.banner(f"Impact only: the change from scenario “{ap.name}” versus baseline. Pools the "
+                              f"scenario does not touch are greyed out. Every chart below shows the change."),
+                    unsafe_allow_html=True)
+        _impact_controls(meta)
+    elif f.view != "baseline":
         ap = S.applied()
         n = len(ap.enabled)
         st.markdown(ui.banner(f"{'Comparing' if f.view == 'compare' else 'Showing'} scenario “{ap.name}” "
                               f"({n} assumption{'s' if n != 1 else ''}){' with baseline' if f.view == 'compare' else ''}. "
                               f"Every chart, KPI and table below uses the same scenario run."), unsafe_allow_html=True)
-    _kpis(result, meta, f, geo, cmp)
+    if f.view == "impact":
+        _impact_kpis(result, meta, f, geo, cmp)
+    else:
+        _kpis(result, meta, f, geo, cmp)
 
     # Toolbar
     with st.container(horizontal=True, wrap=True, vertical_alignment="bottom", gap="medium"):
@@ -232,7 +305,7 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -
                              format_func=S.SEGMENT_LABELS.get, on_change=S.set_selected, args=(None,),
                              help="Sub-pools: the next level of the hierarchy. Geography: states (or counties "
                                   "within a state). Funding source: who pays provider and pharmacy revenue.")
-        if cmp is not None:
+        if cmp is not None and f.view != "impact":
             st.segmented_control("Color by", ["margin", "delta_margin"], key=S.K_COLOR_BY, required=True,
                                  format_func={"margin": "Margin", "delta_margin": "Δ margin"}.get,
                                  help="Margin, or the change in margin versus baseline (pp).")
@@ -242,32 +315,47 @@ def section_overview(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -
                                   "public programs. Consumer = member cost sharing and self-pay (allowed − paid). "
                                   "Applies to provider and pharmacy pools; payer and top-down pools have no split.")
 
-    tiles = V.marimekko_tiles(result, meta, f.dataset, f.year, f.focus, geo, f.basis, f.segment_by)
+    if cmp is not None:
+        tiles = V.compare_tiles(result, cmp, meta, f.dataset, f.year, f.focus, geo, f.basis, f.segment_by)
+    else:
+        tiles = V.marimekko_tiles(result, meta, f.dataset, f.year, f.focus, geo, f.basis, f.segment_by)
     rows = tiles.rows
-    color_by = "margin"
-    if cmp is not None and not rows.empty:
-        bt = V.marimekko_tiles(cmp, meta, f.dataset, f.year, f.focus, geo, f.basis, f.segment_by).rows
-        bt = bt.set_index(["col_id", "seg_key"])[["revenue", "gain", "margin"]]
-        j = rows.join(bt, on=["col_id", "seg_key"], rsuffix="_b")
-        rows = rows.assign(d_revenue=j["revenue"] - j["revenue_b"].fillna(0),
-                           d_gain=j["gain"].fillna(0) - j["gain_b"].fillna(0),
-                           d_margin=j["margin"] - j["margin_b"])
-        color_by = st.session_state[S.K_COLOR_BY]
+    color_by = st.session_state[S.K_COLOR_BY] if cmp is not None else "margin"
+    impact_metric = st.session_state[S.K_IMPACT_METRIC]
+    by_change = False
+    if f.view == "impact":
+        color_by = "impact"
+        by_change = st.session_state[S.K_IMPACT_SIZE] == "change"
+        if by_change and not rows.empty:
+            rows = V.impact_layout(rows, impact_metric)
     col_labels = {c: meta.taxonomy[c].short_label for c in rows["col_id"].unique()}
     estimate_cols = {c for c in col_labels if V.economics_label(meta, c, f.dataset) == "top_down"}
     sel = f.selected
     sel_ref = marimekko.TileRef(*sel) if sel else None
     if rows.empty:
-        st.info("Nothing to show for this combination. " + " ".join(_merge_reasons(meta, tiles.unavailable)))
+        if by_change:
+            st.info(f"No pool in this view changes {S.IMPACT_METRIC_LABELS[impact_metric].lower()} in {f.year}. "
+                    f"Try another year or measure.")
+        else:
+            st.info("Nothing to show for this combination. " + " ".join(_merge_reasons(meta, tiles.unavailable)))
         st.session_state[K_TILE_REFS] = []
     else:
         fig, refs = marimekko.build(rows, col_labels, selected=sel_ref, estimate_cols=estimate_cols,
-                                    basis_label=S.BASIS_REVENUE_LABEL[f.basis], color_by=color_by)
+                                    basis_label=S.BASIS_REVENUE_LABEL[f.basis], color_by=color_by,
+                                    impact_metric=impact_metric, impact_min=V.IMPACT_MIN,
+                                    x_title="Share of total absolute change (column width)" if by_change
+                                    else "Share of revenue (column width)")
         st.session_state[K_TILE_REFS] = refs
-        chart_key = f"pp.mekko.{f.dataset}.{f.focus}.{f.segment_by}.{f.basis}.{f.geo_id}.{f.year}.{f.view}"
+        chart_key = (f"pp.mekko.{f.dataset}.{f.focus}.{f.segment_by}.{f.basis}.{f.geo_id}.{f.year}.{f.view}"
+                     f"{'.' + impact_metric + str(by_change) if f.view == 'impact' else ''}")
         st.plotly_chart(fig, key=chart_key, on_select=lambda: _on_chart_select(chart_key),
                         selection_mode="points", config=PLOTLY_CONFIG)
-    st.markdown(ui.margin_legend(bool(estimate_cols), delta=color_by == "delta_margin"), unsafe_allow_html=True)
+    if color_by == "impact":
+        mx = float(rows[impact_metric].abs().max()) if not rows.empty else 0.0
+        st.markdown(ui.impact_legend(S.IMPACT_METRIC_LABELS[impact_metric], fmt.money(mx), by_change),
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(ui.margin_legend(bool(estimate_cols), delta=color_by == "delta_margin"), unsafe_allow_html=True)
     for n in tiles.notes:
         st.markdown(ui.note(n), unsafe_allow_html=True)
     st.markdown("".join(ui.note(r) for r in _merge_reasons(meta, tiles.unavailable)), unsafe_allow_html=True)
@@ -428,49 +516,61 @@ def section_trends(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> 
                                                        "margin": "Operating margin"}.get)
             plot = df.copy()
             bplot = bdf.copy() if bdf is not None else None
+            if f.view == "impact":  # the change only: scenario − baseline per pool and year
+                b = bdf.set_index(["node_id", "year"])[metric]
+                plot[metric] = plot[metric].to_numpy() - b.reindex(
+                    pd.MultiIndex.from_frame(plot[["node_id", "year"]])).fillna(0).to_numpy()
+                bplot = None
             if metric == "margin":
                 yfmt, hover, suffix = ".1%", fmt.pct, ""
             else:  # axis in $B; hover keeps full formatting
                 plot[metric] = plot[metric] / 1e9
                 if bplot is not None:
                     bplot[metric] = bplot[metric] / 1e9
-                yfmt, hover, suffix = "$,.0f", lambda v: fmt.money(v * 1e9), "B"
+                yfmt = "$,.2f" if f.view == "impact" else "$,.0f"
+                hover, suffix = (lambda v: fmt.money(v * 1e9, signed=f.view == "impact")), "B"
             fig = trends.lines(plot, metric, label_col="label", id_col="node_id", colors=colors,
                                base_year=meta.periods.base_year, yformat=yfmt, hover_fmt=hover,
-                               zero_line=metric != "revenue", baseline=bplot)
+                               zero_line=metric != "revenue" or f.view == "impact", baseline=bplot)
             fig.update_yaxes(ticksuffix=suffix)
             st.plotly_chart(trends.mark_year(fig, f.year), config=PLOTLY_CONFIG, key="pp.trend")
-            if cmp is not None:
+            if f.view == "impact":
+                st.markdown(ui.note("Change versus baseline by year" + (" (percentage points)." if metric == "margin"
+                                                                         else ".")), unsafe_allow_html=True)
+            elif cmp is not None:
                 st.markdown(ui.note("Faint lines show the baseline; solid lines the scenario."), unsafe_allow_html=True)
             if len(ids) > trends.MAX_SERIES:
                 st.markdown(ui.note("Series beyond the fifth share the neutral 'other' color; hover for names."),
                             unsafe_allow_html=True)
 
-            tot = df.groupby("year")["revenue"].transform("sum")
-            df["share"] = df["revenue"] / tot
-            st.markdown('<div class="pp-h3" style="margin-top:8px">Composition of revenue</div>', unsafe_allow_html=True)
-            st.plotly_chart(trends.composition(df, label_col="label", id_col="node_id", colors=colors,
-                                               base_year=meta.periods.base_year),
-                            config=PLOTLY_CONFIG, key="pp.composition")
+            if f.view != "impact":
+                tot = df.groupby("year")["revenue"].transform("sum")
+                df["share"] = df["revenue"] / tot
+                st.markdown('<div class="pp-h3" style="margin-top:8px">Composition of revenue</div>',
+                            unsafe_allow_html=True)
+                st.plotly_chart(trends.composition(df, label_col="label", id_col="node_id", colors=colors,
+                                                   base_year=meta.periods.base_year),
+                                config=PLOTLY_CONFIG, key="pp.composition")
 
             if cmp is not None:
                 _scenario_bridge_table(meta, f, geo)
-            drivers = V.change_drivers(result, meta, f.dataset, f.year, f.focus, geo, f.basis)
-            st.markdown(f'<div class="pp-h3" style="margin-top:8px">What drove the change, {f.year - 1}→{f.year}'
-                        f'{" (scenario)" if f.view != "baseline" else ""}</div>', unsafe_allow_html=True)
-            if drivers.empty:
-                st.markdown(ui.note("No prior year in range."), unsafe_allow_html=True)
-            else:
-                d = drivers.head(8)
-                st.markdown(ui.table(
-                    ["Pool", "Δ Revenue", "Share of Δ", "Δ Gain", "Δ Margin"],
-                    [[r.label, fmt.money(r.d_revenue, signed=True), fmt.pct(r.share_of_change, 0),
-                      fmt.money(r.d_gain, signed=True),
-                      (f"{'+' if r.d_margin_pp > 0 else fmt.MINUS if r.d_margin_pp < 0 else ''}"
-                       f"{abs(r.d_margin_pp):.1f} pp") if np.isfinite(r.d_margin_pp) else fmt.DASH]
-                     for r in d.itertuples()]), unsafe_allow_html=True)
-                st.markdown(ui.note("Year-over-year change by pool. In Compare view the table above attributes "
-                                    "the scenario's change to each assumption."), unsafe_allow_html=True)
+            if f.view != "impact":
+                drivers = V.change_drivers(result, meta, f.dataset, f.year, f.focus, geo, f.basis)
+                st.markdown(f'<div class="pp-h3" style="margin-top:8px">What drove the change, {f.year - 1}→{f.year}'
+                            f'{" (scenario)" if f.view != "baseline" else ""}</div>', unsafe_allow_html=True)
+                if drivers.empty:
+                    st.markdown(ui.note("No prior year in range."), unsafe_allow_html=True)
+                else:
+                    d = drivers.head(8)
+                    st.markdown(ui.table(
+                        ["Pool", "Δ Revenue", "Share of Δ", "Δ Gain", "Δ Margin"],
+                        [[r.label, fmt.money(r.d_revenue, signed=True), fmt.pct(r.share_of_change, 0),
+                          fmt.money(r.d_gain, signed=True),
+                          (f"{'+' if r.d_margin_pp > 0 else fmt.MINUS if r.d_margin_pp < 0 else ''}"
+                           f"{abs(r.d_margin_pp):.1f} pp") if np.isfinite(r.d_margin_pp) else fmt.DASH]
+                         for r in d.itertuples()]), unsafe_allow_html=True)
+                    st.markdown(ui.note("Year-over-year change by pool. In Compare view the table above attributes "
+                                        "the scenario's change to each assumption."), unsafe_allow_html=True)
     with right:
         _inspector(result, meta, f, geo, cmp)
 
@@ -527,10 +627,15 @@ def section_table(result, meta: Metadata, f: S.Filters, geo: Geo, cmp=None) -> N
 
 
 def render() -> None:
-    a = data.adapter()
-    meta = a.metadata
-    base = data.baseline()
-    S.init(meta)
+    S.init(data.adapter().metadata)
+    gj = S.grouping_json()
+    meta = data.metadata(gj)
+    base = data.baseline(gj)
+    f = S.current()
+    if f.focus is not None and f.focus not in meta.taxonomy:      # a group from a grouping no longer active
+        S.set_focus(None)
+    if f.selected and any(x is not None and x not in meta.taxonomy for x in (f.selected[0], f.selected[2])):
+        S.set_selected(None)
     layout.global_bar(meta)
     f = S.current()
     if f.focus is not None and not meta.in_dataset(f.focus, f.dataset):
@@ -540,11 +645,13 @@ def render() -> None:
 
     # ONE engine: the scenario view and every chart read the same cached scenario run.
     result, cmp = base, None
+    if f.view == "impact" and st.session_state[S.K_IMPACT_OF] not in {a.id for a in S.applied().enabled}:
+        st.session_state[S.K_IMPACT_OF] = S.IMPACT_ALL   # before the picker is drawn
     if f.view != "baseline":
-        run = data.scenario_run(S.applied().to_json())
+        run = data.scenario_run(_active_scenario(f.view).to_json(), gj)
         if run.ok:
             result = run.result
-            cmp = base if f.view == "compare" else None
+            cmp = base if f.view in ("compare", "impact") else None
         else:
             st.error("The applied scenario has blocking issues; showing baseline. Open the scenario builder to fix: "
                      + " ".join(i.message for i in run.issues if i.level == "error")[:400])
@@ -554,4 +661,5 @@ def render() -> None:
     f = S.Filters(**{**S.current().__dict__, "view": f.view})
     section_trends(result, meta, f, geo, cmp)
     section_flows(result, meta, f, geo, cmp)
+    section_growth(result, meta, f, geo, cmp)
     section_table(result, meta, f, geo, cmp)

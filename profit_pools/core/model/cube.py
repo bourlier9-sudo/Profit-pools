@@ -147,7 +147,8 @@ class ForecastRates:
         return float(table["default"])
 
     def _ancestor_keys(self, node_id: str) -> list[str]:
-        return [n.id for n in reversed(self.meta.taxonomy.path(node_id))]
+        # Rates follow the STANDARD taxonomy, so regrouping pools never changes the forecast.
+        return [n.id for n in reversed(self.meta.standard.path(node_id))]
 
     def key_chain(self, driver: str, row_key: str) -> list[str | None]:
         if driver in ("enrollment_growth", "premium_trend", "opex_trend"):

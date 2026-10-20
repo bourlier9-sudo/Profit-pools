@@ -51,7 +51,7 @@ def test_geography_and_years(app, geo, year):
 
 
 @pytest.mark.parametrize("focus", ["PAYER", "PAY_COMM", "PRV_HOSP", "PRV_IP", "PHARMACY", "RX_PBM",
-                                   "MANUFACTURER", "HEALTH_SERVICES", "HS_BH_PROGRAMS"])
+                                   "MANUFACTURER", "HEALTH_SERVICES", "HST_SERVICES", "HS_CARE_MGMT"])
 def test_drill_every_level(app, focus):
     app.session_state[S.K_DATASET] = "MARKET"
     app.session_state[S.K_YEAR] = 2025
@@ -126,8 +126,43 @@ def test_scenario_views_render(app, example, view, focus, basis):
         assert "vs baseline" in md and "Why the scenario differs from baseline" in md
 
 
+@pytest.mark.parametrize("which", ["all", "one"])
+@pytest.mark.parametrize("size", ["pool", "change"])
+@pytest.mark.parametrize("metric", ["d_gain", "d_revenue"])
+def test_impact_view_renders(app, example, which, size, metric):
+    app.session_state[S.K_APPLIED] = example
+    app.session_state[S.K_DRAFT] = example
+    app.session_state[S.K_VIEW] = "impact"
+    app.session_state[S.K_DATASET] = "MARKET"
+    app.session_state[S.K_YEAR] = 2028
+    app.session_state[S.K_GEO] = "US"
+    app.session_state[S.K_FOCUS] = None
+    app.session_state[S.K_SELECTED] = None
+    app.session_state[S.K_BASIS] = "allowed"
+    app.session_state[S.K_SEGMENT] = "hierarchy"
+    app.session_state[S.K_IMPACT_OF] = S.IMPACT_ALL if which == "all" else example.enabled[0].id
+    app.session_state[S.K_IMPACT_SIZE] = size
+    app.session_state[S.K_IMPACT_METRIC] = metric
+    app.run()
+    _ok(app)
+    md = " ".join(m.value for m in app.markdown)
+    assert "Impact only" in md and "Δ operating gain" in md
+    assert "Not affected" in md or "No pool in this view changes" in " ".join(i.value for i in app.info)
+    assert [s.value for s in app.selectbox if s.key == S.K_IMPACT_OF] == [app.session_state[S.K_IMPACT_OF]]
+
+
+def test_impact_of_removed_assumption_falls_back_to_all(app, example):
+    app.session_state[S.K_APPLIED] = example
+    app.session_state[S.K_VIEW] = "impact"
+    app.session_state[S.K_IMPACT_OF] = example.enabled[0].id
+    app.run()
+    app.session_state[S.K_APPLIED] = example.remove(example.enabled[0].id)   # e.g. deleted in the builder
+    app.run()
+    _ok(app)
+    assert app.session_state[S.K_IMPACT_OF] == S.IMPACT_ALL
+
+
 def test_chip_label_reflects_state(app, example):
-    from profit_pools.shell.scenario_builder import chip_label
     app.session_state[S.K_APPLIED] = None
     app.session_state[S.K_VIEW] = "baseline"
     app.run()
@@ -189,3 +224,20 @@ def test_flows_enterprise_and_county(app):
     app.session_state[S.K_DATASET] = "MARKET"
     app.session_state[S.K_GEO] = "US"
     app.session_state["pp.sk.consumer"] = False
+
+
+@pytest.mark.parametrize("span", [(2019, 2025), (2025, 2031), (2027, 2028)])
+@pytest.mark.parametrize("metric", ["revenue", "gain"])
+@pytest.mark.parametrize("focus", [None, "PHARMACY"])
+def test_growth_section_renders(app, span, metric, focus):
+    app.session_state[S.K_APPLIED] = None
+    app.session_state[S.K_VIEW] = "baseline"
+    app.session_state[S.K_DATASET] = "MARKET"
+    app.session_state[S.K_FOCUS] = focus
+    app.session_state[S.K_SELECTED] = None
+    app.session_state["pp.growth.from"], app.session_state["pp.growth.to"] = span
+    app.session_state["pp.growth.metric"] = metric
+    app.run()
+    _ok(app)
+    md = " ".join(m.value for m in app.markdown)
+    assert "Compound annual growth" in md and f"What drives revenue growth, {span[0]}→{span[1]}" in md

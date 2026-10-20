@@ -6,7 +6,7 @@ import streamlit as st
 
 from profit_pools.core.data.adapters import DataAdapter
 from profit_pools.core.taxonomy import Metadata
-from profit_pools.shell import scenario_builder
+from profit_pools.shell import grouping_editor, scenario_builder
 from profit_pools.shell import state as S
 
 
@@ -70,7 +70,12 @@ def global_bar(meta: Metadata) -> None:
         if S.has_scenario():
             st.segmented_control("View", list(S.VIEW_LABELS), key=S.K_VIEW, required=True,
                                  format_func=S.VIEW_LABELS.get,
-                                 help="Baseline, the applied scenario, or the scenario compared with baseline.")
+                                 help="Baseline, the applied scenario, the scenario compared with baseline, or only the "
+                                      "change (everything the scenario does not touch is greyed out).")
+        if st.button(grouping_editor.button_label(), key="pp.groupings", icon=":material/account_tree:",
+                     help="Rename pools, move them between groups, or add groups. Changes the hierarchy in every "
+                          "chart, never the numbers."):
+            grouping_editor.open_editor(meta)
         active = S.has_scenario()
         if st.button(scenario_builder.chip_label(), key="pp.chip", icon=":material/tune:",
                      type="primary" if active else "secondary",

@@ -297,23 +297,40 @@ class Metadata:
     default_dataset: str
     geography: Geography
     periods: Periods
+    # The standard taxonomy. Dataset exclusions, supplemental targets and forecast-rate
+    # lookups are resolved against it, so a user regrouping can never change the numbers.
+    base_taxonomy: Taxonomy | None = None
+    grouping_name: str = "Standard"
+
+    @property
+    def standard(self) -> Taxonomy:
+        return self.base_taxonomy or self.taxonomy
 
     def categories_for_target(self, leaf_id: str) -> list[SpendingCategory]:
         return [c for c in self.categories.values() if c.target == leaf_id]
 
+    def _excluded_leaves(self, dataset_id: str) -> frozenset[str]:
+        cache = self.__dict__.setdefault("_excl_cache", {})
+        if dataset_id not in cache:
+            base = self.standard
+            cache[dataset_id] = frozenset(l.id for n in self.datasets[dataset_id].excluded_nodes
+                                          for l in base.leaves(n))
+        return cache[dataset_id]
+
     def in_dataset(self, node_id: str, dataset_id: str) -> bool:
-        """False when the node or any ancestor is excluded from the dataset."""
-        excluded = set(self.datasets[dataset_id].excluded_nodes)
-        return not any(n.id in excluded for n in self.taxonomy.path(node_id))
+        """True when at least one leaf under the node belongs to the dataset (exclusions are leaf-level)."""
+        excl = self._excluded_leaves(dataset_id)
+        return any(l.id not in excl for l in self.taxonomy.leaves(node_id))
 
     def leaves_in_dataset(self, dataset_id: str, node_id: str | None = None) -> list[Node]:
-        return [n for n in self.taxonomy.leaves(node_id) if self.in_dataset(n.id, dataset_id)]
+        excl = self._excluded_leaves(dataset_id)
+        return [n for n in self.taxonomy.leaves(node_id) if n.id not in excl]
 
     def supplemental_targets(self, source_id: str) -> list[str]:
         fs = self.funding_sources[source_id]
         out: list[str] = []
         for anc in fs.targets_under:
-            out += [n.id for n in self.taxonomy.leaves(anc) if n.receives_flows]
+            out += [n.id for n in self.standard.leaves(anc) if n.receives_flows]
         return out
 
 

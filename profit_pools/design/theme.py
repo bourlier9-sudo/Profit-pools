@@ -92,7 +92,7 @@ html, body, .stApp, .stMarkdown, button, input, select, textarea, [data-baseweb]
 .pp-legend {{ display:flex; align-items:center; flex-wrap:wrap; gap:20px; {_type('small')} color:var(--ink-2); margin:4px 0 0; }}
 .pp-grad {{ width:180px; height:8px; border-radius:2px; background:{margin_gradient_css()}; }}
 .pp-grad-wrap {{ display:flex; flex-direction:column; gap:2px; }}
-.pp-grad-ticks {{ display:flex; justify-content:space-between; width:180px; font-size:10px; color:var(--ink-3); font-variant-numeric:tabular-nums; }}
+.pp-grad-ticks {{ position:relative; display:flex; justify-content:space-between; width:180px; font-size:10px; color:var(--ink-3); font-variant-numeric:tabular-nums; }}
 .pp-swatch {{ width:14px; height:10px; display:inline-block; vertical-align:middle; margin-right:6px; border:1px solid var(--line-strong); }}
 .pp-hatch {{ background:repeating-linear-gradient(45deg, {C['missing']}, {C['missing']} 3px, {C['missing_hatch']} 3px, {C['missing_hatch']} 4px); }}
 .pp-dotted {{ background:#fff; border:1px dashed var(--ink-3); }}

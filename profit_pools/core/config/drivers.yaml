@@ -21,32 +21,37 @@ schema_version: 2
 
 drivers:
   enrollment:
-    label: Enrollment
+    label: "Enrollment"
+    explains: "More or fewer members: premiums, medical claims (paid to providers and pharmacy) and admin cost all move with membership."
     unit: members_avg
     stage: 2
     scope_kind: payer
     methods: [pct, set, delta]
   enrollment_shift:
-    label: Enrollment shift between segments
+    label: "Members switching coverage"
+    explains: "Members leave this segment for another plan or become uninsured; their spending follows them at the new coverage's rates."
     unit: members_avg
     stage: 2
     scope_kind: payer
     methods: [delta, pct]
     note: Moves members from the scoped segment to a named target segment or funding source; sum-preserving.
   premium_pmpm:
-    label: Revenue PMPM
+    label: "Premium rate (revenue per member)"
+    explains: "Changes what members and employers pay the plan. Nothing downstream changes."
     unit: usd_pmpm
     stage: 3
     scope_kind: payer
     methods: [pct, set, delta]
   opex_pmpm:
-    label: Residual operating expense PMPM
+    label: "Administrative cost per member"
+    explains: "Changes the plan's own operating cost. Providers and pharmacy are unaffected."
     unit: usd_pmpm
     stage: 3
     scope_kind: payer
     methods: [pct, set, delta]
   opex_volume_scaling:
-    label: Residual opex volume scaling
+    label: "How admin cost scales with membership"
+    explains: "Share of admin cost that varies with enrollment (100% = fully per member). User estimate."
     unit: ratio
     stage: 3
     scope_kind: payer
@@ -58,20 +63,23 @@ drivers:
       per-member, the model default). The data provides no estimate; this is
       offered only as a user-entered assumption.
   payer_margin:
-    label: Payer operating margin
+    label: "Plan operating margin target"
+    explains: "Reached by adjusting admin cost; premiums and claims are unchanged."
     unit: ratio
     stage: 3
     scope_kind: payer
     methods: [pp, set]
     note: Solved through residual opex PMPM; revenue and claims are unchanged.
   allowed_pmpm:
-    label: Allowed spend PMPM
+    label: "Medical cost trend paid by plans"
+    explains: "Plans pay providers and pharmacy more (or less) per member: their claims rise, provider revenue rises by the same allowed dollars."
     unit: usd_pmpm
     stage: 4
     scope_kind: spending
     methods: [pct]
   member_cost_share:
-    label: Member cost share (share of allowed)
+    label: "Member cost sharing"
+    explains: "Shifts who pays: more out-of-pocket means lower plan claims. Provider revenue is unchanged."
     unit: ratio
     stage: 4
     scope_kind: spending
@@ -80,7 +88,8 @@ drivers:
       Moves dollars between payer-paid and consumer spend. Recipient revenue
       (allowed) is unchanged; payer paid claims and gain change.
   utilization:
-    label: Utilization (instances per 1,000)
+    label: "Utilization trend (services per member)"
+    explains: "More services per member, paid by the selected payers at the same price: payer claims and provider revenue rise together."
     unit: instances_per_1000
     stage: 4
     scope_kind: spending
@@ -88,48 +97,55 @@ drivers:
     methods: [pct]
     user_estimate_only: true
   unit_price:
-    label: Average allowed per instance
+    label: "Reimbursement rate trend (price per service)"
+    explains: "Payers pay a higher price per service: payer claims rise, provider revenue rises, volume unchanged."
     unit: usd_per_instance
     stage: 4
     scope_kind: spending
     requires: [instances]
     methods: [pct]
   funding_population:
-    label: Uninsured / public-program population
+    label: "Uninsured / government FFS population"
+    explains: "More or fewer people in the uninsured or government fee-for-service groups; their spending follows them."
     unit: members_avg
     stage: 2
     scope_kind: funding
     basis: population_pmpm
     methods: [pct, set, delta]
   funding_pmpm:
-    label: Uninsured / public-program PMPM
+    label: "Spending per person (uninsured / government FFS)"
+    explains: "Changes what the uninsured or government programs pay providers per person."
     unit: usd_pmpm
     stage: 4
     scope_kind: spending
     basis: population_pmpm
     methods: [pct]
   supplemental_payments:
-    label: Supplemental & state payments
+    label: "Supplemental & state payments to hospitals"
+    explains: "State and supplemental program payments to hospitals; no other pool is affected."
     unit: usd_annual
     stage: 6
     scope_kind: funding
     basis: lump_sum
     methods: [pct, set]
   provider_margin:
-    label: Recipient operating margin
+    label: "Operating efficiency (margin)"
+    explains: "The pool keeps more or less of each revenue dollar. Revenue and everyone else are unchanged."
     unit: ratio
     stage: 7
     scope_kind: recipient
     methods: [pp, set]
     note: Never applied to payers; payer margin is a separate driver.
   top_down_revenue:
-    label: Top-down revenue
+    label: "Market size (top-down estimate)"
+    explains: "Resizes a top-down market estimate. No payer or provider flows are affected."
     unit: usd_annual
     stage: 8
     scope_kind: top_down
     methods: [pct, set]
   top_down_margin:
-    label: Top-down operating margin
+    label: "Operating margin (top-down estimate)"
+    explains: "Changes the margin of a top-down market estimate."
     unit: ratio
     stage: 8
     scope_kind: top_down
@@ -139,11 +155,11 @@ drivers:
 # an INPUT; CAGRs shown in the UI are always computed from resulting values.
 # Defaults live in baseline_forecast.yaml.
 growth_drivers:
-  enrollment_growth: {label: Enrollment growth, scope_kind: payer, stage: 1}
-  premium_trend: {label: Revenue PMPM trend, scope_kind: payer, stage: 1}
-  opex_trend: {label: Residual opex PMPM trend, scope_kind: payer, stage: 1}
-  utilization_trend: {label: Utilization trend, scope_kind: spending, stage: 1}
-  unit_cost_trend: {label: Unit cost trend, scope_kind: spending, stage: 1}
-  population_growth: {label: Uninsured / public population growth, scope_kind: funding, stage: 1}
-  supplemental_growth: {label: Supplemental payment growth, scope_kind: funding, stage: 1}
-  top_down_growth: {label: Top-down revenue growth, scope_kind: top_down, stage: 1}
+  enrollment_growth: {label: "Enrollment growth rate", scope_kind: payer, stage: 1}
+  premium_trend: {label: "Premium trend", scope_kind: payer, stage: 1}
+  opex_trend: {label: "Admin cost trend", scope_kind: payer, stage: 1}
+  utilization_trend: {label: "Utilization trend (per year)", scope_kind: spending, stage: 1}
+  unit_cost_trend: {label: "Reimbursement / unit-cost trend (per year)", scope_kind: spending, stage: 1}
+  population_growth: {label: "Uninsured / government FFS population growth", scope_kind: funding, stage: 1}
+  supplemental_growth: {label: "Supplemental payment growth", scope_kind: funding, stage: 1}
+  top_down_growth: {label: "Market growth (top-down)", scope_kind: top_down, stage: 1}

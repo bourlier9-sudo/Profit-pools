@@ -25,7 +25,7 @@ import pandas as pd
 from profit_pools.core.config import load_config
 from profit_pools.core.model.cube import DriverCube, ForecastRates, project
 from profit_pools.core.model.engine import ModelResult, run
-from profit_pools.core.model.resolve import Issue, describe_scope, expand_sources, resolve
+from profit_pools.core.model.resolve import Issue, describe_scope, expand_sources, match, resolve
 from profit_pools.core.model.scenario import Assumption, Scenario
 from profit_pools.core.taxonomy import Metadata
 
@@ -169,6 +169,8 @@ def validate(meta: Metadata, scenario: Scenario) -> list[Issue]:
         sc = a.scope
         if a.method not in spec["methods"]:
             err("method", f"{spec['label']} supports {', '.join(spec['methods'])}, not {a.method}.")
+        if a.phase_in and a.method == "set":
+            err("phase_in", "Phase-in applies to changes (%, pp, add), not to a set level.")
         if a.method == "set" and a.mode == "stack":
             err("mode", "A 'set' value replaces the driver level and cannot be stacked.")
         if sc.years.end is not None and sc.years.end < sc.years.start:
@@ -182,7 +184,8 @@ def validate(meta: Metadata, scenario: Scenario) -> list[Issue]:
             continue
         if sc.node_id is not None:
             if sc.node_id not in meta.taxonomy:
-                err("node", f"Unknown pool {sc.node_id!r}.")
+                err("node", f"Pool group {sc.node_id!r} is not in the active pool grouping." if sc.node_id.startswith("GRP_")
+                    else f"Unknown pool {sc.node_id!r}.")
                 continue
             if sc.dataset and not meta.in_dataset(sc.node_id, sc.dataset):
                 err("dataset.node", f"{meta.taxonomy[sc.node_id].label} is not part of the "
@@ -280,13 +283,24 @@ def _kind_text(kind: str) -> str:
 # Application
 # ---------------------------------------------------------------------------
 
+def phase_fraction(a: Assumption, years: np.ndarray, end_year: int) -> np.ndarray:
+    """Linear phase-in: 1/n of the value in the first year of the range, the full value by its last year."""
+    start = a.scope.years.start
+    end = a.scope.years.end if a.scope.years.end is not None else end_year
+    n = max(end - start + 1, 1)
+    return np.clip((years - start + 1) / n, 0.0, 1.0)
+
+
 def _apply_values(x: np.ndarray, a: Assumption, mask: np.ndarray, kind: str, groups: np.ndarray | None,
-                  issues: list[Issue]) -> np.ndarray:
-    """Return x with assumption `a` applied on `mask` rows."""
+                  issues: list[Issue], years: np.ndarray | None = None, end_year: int = 0) -> np.ndarray:
+    """Return x with assumption `a` applied on `mask` rows (phase-in scales the value by year)."""
     out = x.copy()
     if not mask.any():
         return out
-    v, m = a.value, a.method
+    m = a.method
+    v = a.value
+    if a.phase_in and years is not None and m != "set":
+        v = (a.value * phase_fraction(a, years, end_year))[mask]
     if m == "pct":
         out[mask] = x[mask] * (1 + v)
     elif m == "pp":
@@ -302,12 +316,13 @@ def _apply_values(x: np.ndarray, a: Assumption, mask: np.ndarray, kind: str, gro
     return out
 
 
-def _governed(x: np.ndarray, res, items: dict[int, Assumption], kind: str, groups, issues) -> np.ndarray:
+def _governed(x: np.ndarray, res, items: dict[int, Assumption], kind: str, groups, issues,
+              years: np.ndarray | None = None, end_year: int = 0) -> np.ndarray:
     out = x.copy()
     for idx in np.unique(res.winner[res.winner >= 0]):
-        out = _apply_values(out, items[idx], res.winner == idx, kind, groups, issues)
+        out = _apply_values(out, items[idx], res.winner == idx, kind, groups, issues, years, end_year)
     for idx, mk in res.stacks:
-        out = _apply_values(out, items[idx], mk, kind, groups, issues)
+        out = _apply_values(out, items[idx], mk, kind, groups, issues, years, end_year)
     return out
 
 
@@ -348,7 +363,8 @@ class ScenarioRates:
             e = self.ledger[a.id]
             e.matched_cells += res.matched.get(a.id, 0)
             e.effective_cells += res.effective.get(a.id, 0)
-        return _governed(r, res, dict(items), "rate", None, self.issues)
+        return _governed(r, res, dict(items), "rate", None, self.issues,
+                         np.full(len(rows), year), self.meta.periods.forecast_end)
 
 
 def _groups(frame: pd.DataFrame) -> np.ndarray:
@@ -392,11 +408,13 @@ def apply_scenario(hist: DriverCube, meta: Metadata, scenario: Scenario) -> tupl
             ledger[a.id].effective_cells += res.effective.get(a.id, 0)
         imap = dict(items)
         if kind == "factor":
-            f = _governed(np.ones(len(df)), res, imap, "factor", None, issues)
+            yrs, end = df["year"].to_numpy(), meta.periods.forecast_end
+            f = _governed(np.ones(len(df)), res, imap, "factor", None, issues, yrs, end)
             for c in col:
                 df[c] = df[c].to_numpy() * f
         elif driver == "member_cost_share":
-            cs = _governed(1 - df["paid_ratio"].to_numpy(), res, imap, "rate", None, issues)
+            cs = _governed(1 - df["paid_ratio"].to_numpy(), res, imap, "rate", None, issues,
+                           df["year"].to_numpy(), meta.periods.forecast_end)
             if ((cs < -1e-12) | (cs > 1 + 1e-12)).any():
                 for _, a in items:
                     issues.append(Issue("error", "result.cost_share", "Member cost share would leave the 0–100% range.", a.id))
@@ -404,14 +422,16 @@ def apply_scenario(hist: DriverCube, meta: Metadata, scenario: Scenario) -> tupl
         elif driver == "payer_margin":
             mset = df["margin_set"].to_numpy().copy()
             mpp = df["margin_pp"].to_numpy().copy()
+            frac = lambda a: (phase_fraction(a, df["year"].to_numpy(), meta.periods.forecast_end)  # noqa: E731
+                              if a.phase_in else np.ones(len(df)))
             for idx in np.unique(res.winner[res.winner >= 0]):
                 a, rows = imap[idx], res.winner == idx
                 if a.method == "set":
                     mset[rows] = a.value
                 else:
-                    mpp[rows] += a.value
+                    mpp[rows] += (a.value * frac(a))[rows]
             for idx, mk in res.stacks:
-                mpp[mk] += imap[idx].value
+                mpp[mk] += (imap[idx].value * frac(imap[idx]))[mk]
             df["margin_set"], df["margin_pp"] = mset, mpp
         else:
             x = df[col].to_numpy(dtype=float)
@@ -425,7 +445,8 @@ def apply_scenario(hist: DriverCube, meta: Metadata, scenario: Scenario) -> tupl
                             issues.append(Issue("warning", "margin.missing",
                                                 f"{int(missing.sum()):,} cells have no margin data; a pp change "
                                                 f"leaves them unavailable.", a.id))
-            df[col] = _governed(x, res, imap, kind, _groups(df), issues)
+            df[col] = _governed(x, res, imap, kind, _groups(df), issues, df["year"].to_numpy(),
+                                meta.periods.forecast_end)
 
     # result sanity checks (blocking)
     for name, cols in (("payer", ["members", "premium_pmpm", "opex_pmpm"]), ("spend", ["allowed_pmpm"]),
@@ -481,18 +502,18 @@ def _cross_driver_warnings(enabled: list[tuple[int, Assumption]], issues: list[I
 def _apply_shifts(meta: Metadata, frames: dict, items, issues: list[Issue], ledger: dict) -> None:
     payer, pop = frames["payer"], frames["population"]
     key = ["dataset", "year", "county"]
-    from profit_pools.core.model.resolve import match
     for _, a in items:
         mk = match(meta, payer, a.scope, node_col="node_id")
         ledger[a.id].matched_cells += int(mk.sum())
         if not mk.any():
             continue
         members = payer["members"].to_numpy()
+        v = a.value * (phase_fraction(a, payer["year"].to_numpy(), meta.periods.forecast_end) if a.phase_in else 1.0)
         if a.method == "pct":
-            moved = np.where(mk, members * a.value, 0.0)
+            moved = np.where(mk, members * v, 0.0)
         else:
             tot = pd.Series(np.where(mk, members, 0.0)).groupby(_groups(payer)).transform("sum").to_numpy()
-            moved = np.where(mk & (tot > 0), a.value * members / np.where(tot > 0, tot, 1), 0.0)
+            moved = np.where(mk & (tot > 0), v * members / np.where(tot > 0, tot, 1), 0.0)
             if (moved > members + 1e-9).any():
                 issues.append(Issue("error", "shift.exceeds", "The shift moves more members than the segment has.", a.id))
                 continue
@@ -563,9 +584,12 @@ def preview(hist: DriverCube, meta: Metadata, scenario: Scenario, assumption_id:
         return out
 
     def layer_totals(res: ModelResult) -> pd.DataFrame:
-        p = res.pools[(res.pools["dataset"] == dataset) & (res.pools["year"] == year)]
-        return p.groupby("layer_id")[["revenue", "gain"]].sum(min_count=1)
+        p = res.pools[res.pools["dataset"] == dataset]
+        p = p.assign(layer_id=p["node_id"].map({n.id: n.layer_id for n in meta.taxonomy}))   # active grouping
+        return p.groupby(["year", "layer_id"])[["revenue", "gain"]].sum(min_count=1)
 
-    d = layer_totals(r1.result).sub(layer_totals(r0.result), fill_value=0)
+    d_all = layer_totals(r1.result).sub(layer_totals(r0.result), fill_value=0).fillna(0.0)
+    d = d_all.xs(year, level="year") if year in d_all.index.get_level_values("year") else d_all.iloc[0:0]
     out["delta"] = d[(d["revenue"].abs() > 1) | (d["gain"].abs() > 1)]
+    out["series"] = d_all.reset_index()          # year × layer Δ revenue / Δ gain, all years
     return out

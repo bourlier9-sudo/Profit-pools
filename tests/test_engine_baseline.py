@@ -1,13 +1,12 @@
 """Phase 2: baseline driver cube, forecast projection, engine identities and views."""
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from profit_pools.core.data.adapters import SyntheticAdapter
 from profit_pools.core.model.cube import ForecastRates, build_history, project
 from profit_pools.core.model.engine import run, run_baseline
-from profit_pools.core.model.views import Geo, cagr, node_series, rollup, select, totals
+from profit_pools.core.model.views import Geo, cagr, node_series, rollup, totals
 
 DATASETS = ["MARKET", "ENTERPRISE"]
 

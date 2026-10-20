@@ -58,6 +58,8 @@ class Assumption:
     mode: str = "replace"        # replace: conflicts with overlapping assumptions (default); stack: compounds
     enabled: bool = True
     target: str | None = None    # enrollment_shift destination (payer leaf or funding source)
+    phase_in: bool = False       # ramp linearly to the full value by the last year of the range
+    origin: str | None = None    # where the guided builder started (pool id or "FUND:<id>"); UI round-trip only
     label: str = ""
     notes: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
@@ -118,7 +120,8 @@ class Scenario:
 
     def content_hash(self) -> str:
         """Stable hash of the economic content (enabled assumptions in order), used for caching."""
-        payload = [_assumption_dict(a) | {"id": None, "label": None, "notes": None} for a in self.enabled]
+        payload = [_assumption_dict(a) | {"id": None, "label": None, "notes": None, "origin": None}
+                   for a in self.enabled]
         return hashlib.sha1(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
     @staticmethod
@@ -184,5 +187,6 @@ def _assumption_from(a: dict[str, Any]) -> Assumption:
                   sources=tuple(sc.get("sources") or ()), geography=tuple(sc.get("geography") or ()))
     return Assumption(driver=str(a["driver"]), method=method, value=value, scope=scope, mode=mode,
                       enabled=bool(a.get("enabled", True)), target=a.get("target"),
+                      phase_in=bool(a.get("phase_in", False)), origin=a.get("origin"),
                       label=str(a.get("label", "")), notes=str(a.get("notes", "")),
                       id=str(a.get("id") or uuid.uuid4().hex[:8]))

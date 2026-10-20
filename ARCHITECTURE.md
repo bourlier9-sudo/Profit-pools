@@ -22,6 +22,7 @@ profit_pools/
     config/          *.yaml + loader      taxonomy, datasets, funding sources, lobs, categories, geo, periods,
                                           metrics, drivers, baseline forecast, methodology text
     taxonomy.py                           Taxonomy tree, datasets, funding sources, LOBs, categories, geography, periods → Metadata
+    grouping.py                           user pool groupings (rename / move / add) over the standard taxonomy       ✅ Phase 6
     data/
       contracts.py                        fictional table schemas + validate_bundle()
       synthetic.py                        deterministic generator (seeded)
@@ -36,13 +37,15 @@ profit_pools/
                                           ledger, bridge (sequential attribution), preview               ✅ Phase 4
       flows_view.py                       Sankey views: configurable columns, expansion, filters, "Other" folding,
                                           consumer split, gain metric, node/link inspector facts, compare Δ  ✅ Phase 5
-      growth.py                           growth decomposition (CAGR helper lives in views.py)
+      growth.py                           growth table, indexed series, YoY matrix, revenue-growth bridge  ✅ Phase 6
     export/           (Phase 7)           csv, scenario_json, html_snapshot, pptx_summary
   design/                                 tokens.py · theme.py (CSS + Plotly template) · format.py · components.py   ✅
-  charts/                                 marimekko.py · trends.py · sankey.py ✅ · waterfall.py (Phase 6)
-  shell/                                  state.py (pp.* keys) · data.py (cached adapter/engine/scenario runs) ·
-                                          layout.py · scenario_builder.py (dialog)                                   ✅
-  modules/                                registry.py + profit_pools/page.py (A, B, E) + flows_section.py (C)       ✅
+  charts/                                 marimekko.py · trends.py · sankey.py · growth.py (waterfall, heatmap)     ✅
+  shell/                                  state.py (pp.* keys) · data.py (cached, keyed by scenario + grouping) ·
+                                          layout.py · scenario_builder.py (dialog) · assumption_wizard.py (guided
+                                          Where → What → How much) · grouping_editor.py (dialog)                   ✅
+  modules/                                registry.py + profit_pools/page.py (A, B, E) + flows_section.py (C) +
+                                          growth_section.py (D)                                                     ✅
 tests/
 ```
 
@@ -139,6 +142,8 @@ Assumption(
   value,
   mode="replace",                # replace (default: overlaps conflict) | stack (compounds)
   target=None,                   # enrollment_shift destination: payer leaf or population funding source
+  phase_in=False,                # ramp pct/pp/delta linearly to the full value by the range's last year
+  origin=None,                   # guided-builder round-trip ("<where>|<lever>"); not economic, not hashed
   scope=Scope(
     years=YearRange(start, end|None),   # end None = "onward"
     dataset=None | "MARKET" | "ENTERPRISE",
@@ -249,12 +254,38 @@ It runs the pipeline with the assumption and without it.
   * The steps sum exactly to scenario − baseline. The bridge is order-dependent by design, and the
     order is shown.
 
-### 6.5 Growth and CAGR
+### 6.5 Growth and CAGR (`model/growth.py`)
 
 * Forecast growth rates are **inputs**.
 * Displayed CAGRs are **computed** from resulting values: `(V_end / V_start)^(1/n) − 1`.
 * Gain CAGR is "n/m" when either endpoint is ≤ 0 or unavailable.
 * No calculation feeds a computed CAGR back into a driver, so there is no circularity.
+* `indexed()` rebases each pool to 100 in a start year (NaN on a non-positive base); `yoy()` is the
+  pools × years growth matrix.
+* `revenue_bridge(node, y0, y1)` splits Δ allowed revenue, read only from pools and flows:
+  * payer pools: Δ members × starting revenue PMPM, then premium rate (the rest);
+  * recipients' payer-claims inflows (joined to source-plan members at state × county × plan): members
+    covered, then utilization (instances per member) and price per instance, or spend per member where
+    there are no instances (pharmacy);
+  * uninsured & government FFS, supplemental and top-down revenue as their own lines;
+  * cells present in only one year → "mix". Σ components = Δ revenue exactly (tested).
+
+### 6.6 Guided builder and impact view
+
+* `shell/assumption_wizard.py` holds a lever catalog: each lever maps to exactly one driver plus a scope
+  rule (payer-origin spend levers scope `sources` to the plan's LOBs and `node_id` to the paid-to pool;
+  recipient-origin levers scope `node_id` to the pool and `sources` to the paying plans). It does no
+  economics; the engine validates every result.
+* Impact view: `views.compare_tiles` adds Δ per tile; `views.impact_layout` re-lays tiles with area ∝ |Δ|.
+  "One assumption on its own" runs a single-assumption scenario (cached like any other).
+
+### 6.7 Pool groupings (`core/grouping.py`)
+
+* `Grouping(renames, moves, new_groups)` is an overlay on the standard taxonomy; `apply()` validates it and
+  prunes empty groups; `regroup(meta, g)` returns metadata with `base_taxonomy` = standard.
+* Leaves keep ids and economics, so values are identical under any grouping. Dataset exclusions,
+  supplemental targets and forecast-rate lookups always use `meta.standard`.
+* `engine.relayer()` re-derives `layer_id`. `shell/data.py` keys every cached result by the grouping JSON.
 
 ## 7. `ModelResult` and views
 

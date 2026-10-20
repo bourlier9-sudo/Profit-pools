@@ -10,7 +10,7 @@ participants, and how scenarios would change those economics, all from one analy
 
 ```bash
 pip install -r requirements.txt
-python -m pytest                              # 343 unit, reconciliation, scenario, Sankey and UI tests
+python -m pytest                              # 446 unit, reconciliation, scenario, Sankey, growth and UI tests
 python -m profit_pools.core.data.synthetic    # fictional dataset summary + contract validation (market + enterprise)
 ```
 

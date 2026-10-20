@@ -49,4 +49,5 @@ top_down_growth:
   MFR_GENERIC: 0.01
   RX_PBM: 0.05
   HS_BH: 0.09
-  HS_TECH: 0.07
+  HST_SOFTWARE: 0.06
+  HST_DATA: 0.10

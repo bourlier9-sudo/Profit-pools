@@ -52,16 +52,17 @@ def pp(x: float | None, digits: int = 1) -> str:
     return f"{s}{abs(x) * 100:.{digits}f} pp"
 
 
-def count(x: float | None, unit: str = "") -> str:
+def count(x: float | None, unit: str = "", signed: bool = False) -> str:
     if _bad(x):
         return DASH
     a = abs(x)
     body = (f"{a / 1e6:,.1f}M" if a >= 1e6 else f"{a / 1e3:,.0f}K" if a >= 1e4 else f"{a:,.0f}")
-    return f"{_sign(x)}{body}{(' ' + unit) if unit else ''}"
+    sign = "+" if signed and x > 0 else _sign(x)
+    return f"{sign}{body}{(' ' + unit) if unit else ''}"
 
 
-def members(x: float | None) -> str:
-    return count(x)
+def members(x: float | None, signed: bool = False) -> str:
+    return count(x, signed=signed)
 
 
 def cagr(x: float | None) -> str:

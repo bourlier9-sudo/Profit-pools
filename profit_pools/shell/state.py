@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import streamlit as st
 
+from profit_pools.core.grouping import Grouping
 from profit_pools.core.model.scenario import Scenario
 from profit_pools.core.taxonomy import Metadata
 
@@ -19,11 +20,19 @@ K_SELECTED = "pp.selected"    # (col_id, seg_key, seg_node_id) or None
 K_TREND_METRIC = "pp.trend_metric"
 K_DRAFT = "pp.scenario.draft"        # Scenario being edited in the builder
 K_APPLIED = "pp.scenario.applied"    # Scenario driving the workspace (None = baseline only)
-K_VIEW = "pp.view"                   # baseline | scenario | compare
+K_VIEW = "pp.view"                   # baseline | scenario | compare | impact
 K_COLOR_BY = "pp.color_by"           # margin | delta_margin (compare view)
 K_EDIT = "pp.scenario.editing"       # assumption id being edited, "__new__", or None
+K_IMPACT_OF = "pp.impact.of"         # "__all__" or one assumption id (run standalone against baseline)
+K_IMPACT_METRIC = "pp.impact.metric" # d_gain | d_revenue
+K_IMPACT_SIZE = "pp.impact.size"     # pool | change
+IMPACT_ALL = "__all__"
+K_GROUPING = "pp.grouping.applied"   # Grouping driving the workspace (standard by default)
+K_GROUPING_DRAFT = "pp.grouping.draft"
 
-VIEW_LABELS = {"baseline": "Baseline", "scenario": "Scenario", "compare": "Compare"}
+VIEW_LABELS = {"baseline": "Baseline", "scenario": "Scenario", "compare": "Compare", "impact": "Impact only"}
+IMPACT_METRIC_LABELS = {"d_gain": "Operating gain", "d_revenue": "Revenue"}
+IMPACT_SIZE_LABELS = {"pool": "Pool size", "change": "Size of change"}
 
 BASIS_LABELS = {"allowed": "Allowed", "paid": "Payer-paid", "consumer": "Consumer"}
 BASIS_REVENUE_LABEL = {"allowed": "Revenue", "paid": "Payer-paid revenue", "consumer": "Consumer-paid revenue"}
@@ -56,11 +65,22 @@ def init(meta: Metadata) -> None:
         K_COLOR_BY: "margin",
         K_EDIT: None,
         K_APPLIED: None,
+        K_IMPACT_OF: IMPACT_ALL,
+        K_IMPACT_METRIC: "d_gain",
+        K_IMPACT_SIZE: "pool",
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
+    st.session_state.setdefault(K_GROUPING, Grouping())
+    st.session_state.setdefault(K_GROUPING_DRAFT, st.session_state[K_GROUPING])
     if K_DRAFT not in st.session_state:
         st.session_state[K_DRAFT] = Scenario("Scenario A", base_year=meta.periods.base_year)
+
+
+def grouping_json() -> str:
+    """Cache key for the active pool grouping ("" = standard taxonomy)."""
+    g = st.session_state.get(K_GROUPING)
+    return "" if g is None or g.is_standard else g.to_json()
 
 
 def current() -> Filters:

@@ -205,8 +205,19 @@ Negative numbers use a true minus (−), not a hyphen. Unavailable values render
 * A forecast band covers the forecast years.
 
 ### Growth bridge (waterfall)
-* Baseline end value → one bar per assumption (in list order) → scenario end value.
-* Increases teal, decreases red, totals `--ink-3`.
+* Horizontal: start revenue → one bar per growth driver → end revenue, so labels stay readable.
+* Increases teal, decreases red, totals `--ink-3`. The value axis is labelled and may start above 0.
+* The assumption attribution (scenario vs baseline) stays a table in Section B.
+
+### Indexed growth and YoY heatmap
+* Indexed lines rebased to 100, a hairline at 100, faint baseline lines when a scenario is active.
+* YoY heatmap uses the margin diverging scale (neutral at 0%), values printed in cells, "f" marks forecast.
+
+### Impact-only view
+* Unaffected tiles: `--line` fill, "no change" in `--ink-3`.
+* Affected tiles: diverging scale by sign, intensity √(|Δ| / max |Δ|) with a 25% floor so small changes stay
+  visible. The legend states the square-root scale and ±max.
+* Sankey: link width = |Δ|, teal increases, red decreases, unchanged flows hidden.
 
 ## 9. Interaction rules
 

@@ -110,7 +110,8 @@ layers:
           - {id: PRV_AMB_IMG, label: Imaging Centers, short_label: Imaging}
 
   - id: PHARMACY
-    label: Pharmacy
+    label: Pharmacy Services & Dispensing
+    short_label: Pharmacy
     economics: margin_on_revenue
     coverage: allocated
     geo_level: state
@@ -155,7 +156,8 @@ layers:
           - {id: RX_PBM_GOV, label: Government PBM Services, short_label: Gov. PBM}
 
   - id: MANUFACTURER
-    label: Manufacturer
+    label: Life Sciences Manufacturers
+    short_label: Manufacturers
     economics: top_down
     coverage: top_down
     geo_level: national
@@ -177,44 +179,60 @@ layers:
           - {id: MFR_DIAG, label: Diagnostics, short_label: Diagnostics}
 
   - id: HEALTH_SERVICES
-    label: Health Services
+    label: Health Services & Technology
+    short_label: HST
     economics: top_down
     coverage: top_down
     geo_level: national
     receives_flows: false
-    description: Services sold to payers and providers. Top-down estimates only.
+    description: >-
+      Software, data and tech-enabled services sold to payers and providers.
+      Top-down estimates only. Segment structure follows public industry
+      profit-pool frameworks; all figures are fictional.
     children:
-      - id: HS_PAYER
-        label: Payer Services
+      - id: HST_SOFTWARE
+        label: Software & Platforms
+        short_label: Software
         children:
+          - id: HST_PAYER_PLATFORMS
+            label: Payer Platforms
+            children:
+              - {id: HS_CLAIMS_PLATFORM, label: Claims & Core Admin, short_label: Core Admin}
+              - {id: HST_PAYMENT_INTEGRITY, label: Payment Integrity}
+          - id: HST_PROVIDER_SOFTWARE
+            label: Provider Software
+            children:
+              - {id: HST_EHR, label: EHR & Clinical Software, short_label: EHR & Clinical}
+              - {id: HST_RCM_SOFTWARE, label: Revenue Cycle Software, short_label: RCM Software}
+      - id: HST_DATA
+        label: Data & Analytics
+        short_label: Data & Analytics
+        children:
+          - {id: HST_INTEROP, label: Interoperability}
+          - {id: HS_ANALYTICS, label: Analytics}
+          - {id: HST_POP_HEALTH, label: Population Health Analytics, short_label: Pop. Health}
+      - id: HST_SERVICES
+        label: Tech-Enabled Services
+        short_label: Tech-Enabled Svcs
+        children:
+          - {id: HS_RCM, label: Revenue Cycle Management, short_label: RCM Services}
           - id: HS_CARE_MGMT
-            label: Care Management
+            label: Utilization & Care Management
+            short_label: UM & Care Mgmt
             children:
               - {id: HS_UM, label: Utilization Management}
-              - {id: HS_CARE_COORD, label: Care Coordination}
-          - id: HS_TECH
-            label: Technology & Analytics
-            short_label: Tech & Analytics
-            children:
-              - {id: HS_CLAIMS_PLATFORM, label: Claims & Admin Platforms, short_label: Claims Platforms}
-              - {id: HS_ANALYTICS, label: Analytics}
-      - id: HS_PROVIDER
-        label: Provider Services
-        children:
+              - {id: HS_CARE_COORD, label: Care Management}
           - id: HS_ENABLEMENT
-            label: Provider Enablement
+            label: Provider & Network Enablement
+            short_label: Enablement
             children:
               - {id: HS_VBC, label: Value-Based Care Enablement, short_label: VBC Enablement}
-              - {id: HS_RCM, label: Revenue Cycle Services, short_label: Revenue Cycle}
+              - {id: HST_NETWORK, label: Network Management}
       - id: HS_BH
         label: Behavioral Health Services
         short_label: BH Services
         children:
-          - id: HS_BH_PROGRAMS
-            label: Behavioral Health Programs
-            short_label: BH Programs
-            children:
-              - {id: HS_BH_UM, label: BH Utilization Management, short_label: BH UM}
-              - {id: HS_BH_ENABLE, label: BH Provider Enablement, short_label: BH Enablement}
-              - {id: HS_BH_NETWORK, label: BH Network Management, short_label: BH Network}
-              - {id: HS_BH_OTHER, label: Other BH Services, short_label: Other BH}
+          - {id: HS_BH_UM, label: BH Utilization Management, short_label: BH UM}
+          - {id: HS_BH_ENABLE, label: BH Provider Enablement, short_label: BH Enablement}
+          - {id: HS_BH_NETWORK, label: BH Network Management, short_label: BH Network}
+          - {id: HS_BH_OTHER, label: Other BH Services, short_label: Other BH}

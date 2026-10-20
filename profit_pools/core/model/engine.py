@@ -161,3 +161,12 @@ def run_baseline(adapter: DataAdapter) -> ModelResult:
     """History + baseline forecast, no assumptions."""
     meta = adapter.metadata
     return run(project(build_history(adapter), meta), meta)
+
+
+def relayer(result: ModelResult, meta: Metadata) -> ModelResult:
+    """Re-derive `layer_id` under a (re)grouped taxonomy. Values are untouched."""
+    layer = result.pools["node_id"].map({n.id: n.layer_id for n in meta.taxonomy})
+    if (layer == result.pools["layer_id"]).all():
+        return result
+    return ModelResult(pools=result.pools.assign(layer_id=layer), flows=result.flows,
+                       base_year=result.base_year, scenario_id=result.scenario_id)
