@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "example3",
+  "name": "Cost pressure",
+  "description": "Fictional example: faster hospital price and utilization trend paid by plans, with provider margins squeezed.",
+  "base_year": 2025,
+  "assumptions": [
+    {"id": "cp-price", "driver": "unit_cost_trend", "method": "pp", "value": 0.01, "mode": "replace", "enabled": true,
+     "label": "Hospital reimbursement trend", "notes": "Paid by every plan; premiums unchanged.",
+     "scope": {"years": {"start": 2026, "end": null}, "dataset": null, "node_id": "PRV_HOSP", "sources": [], "geography": []}},
+    {"id": "cp-util", "driver": "utilization_trend", "method": "pp", "value": 0.005, "mode": "replace", "enabled": true,
+     "label": "Outpatient utilization trend", "notes": "",
+     "scope": {"years": {"start": 2026, "end": null}, "dataset": null, "node_id": "PRV_OP", "sources": [], "geography": []}},
+    {"id": "cp-margin", "driver": "provider_margin", "method": "pp", "value": -0.015, "mode": "replace", "enabled": true,
+     "label": "Hospital margin squeeze", "notes": "",
+     "scope": {"years": {"start": 2027, "end": null}, "dataset": null, "node_id": "PRV_HOSP", "sources": [], "geography": []}}
+  ]
+}

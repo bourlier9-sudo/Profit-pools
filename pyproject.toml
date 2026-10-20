@@ -1,0 +1,9 @@
+[project]
+name = "profit-pools-explorer"
+version = "0.1.0"
+description = "Profit Pools Explorer — healthcare market analytics prototype on fictional data"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

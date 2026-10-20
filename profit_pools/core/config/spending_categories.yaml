@@ -1,0 +1,46 @@
+# Spending categories — FICTIONAL. Each claims category maps allowed spend to
+# exactly one recipient leaf.
+#
+# Service volume is a single unit: INSTANCES (count of service instances per
+# year, as defined by the source). No admissions / days / visits detail is
+# claimed. Instances exist only where `instances: true`. Pharmacy categories
+# never carry instances, because pharmacy claim counts mix administrative and
+# drug claims.
+#
+# Where instances exist:  allowed = instances × average allowed per instance.
+# Utilization and unit-price assumptions are offered only for those categories.
+# Everywhere else only allowed-PMPM assumptions apply.
+schema_version: 2
+
+instance_unit:
+  id: instance
+  label: Service instances
+  definition: >-
+    Count of distinct service instances per year as recorded in the source
+    claims (one instance per claim event). Comparable within a category over
+    time; not a clinical unit such as admissions or days.
+
+claims_categories:
+  # --- Provider -------------------------------------------------------------
+  - {id: IP_MEDSURG, label: Med/surg inpatient, target: PRV_IP_MEDSURG, instances: true}
+  - {id: IP_MATERNITY, label: Maternity & newborn, target: PRV_IP_MATERNITY, instances: true}
+  - {id: OP_ED, label: Emergency department, target: PRV_OP_ED, instances: true}
+  - {id: OP_SURG, label: Outpatient surgery, target: PRV_OP_SURG, instances: true}
+  - {id: OP_OTHER, label: Other hospital outpatient, target: PRV_OP_OTHER, instances: true}
+  - {id: IP_PSYCH, label: Psychiatric inpatient, target: PRV_HOSP_PSYCH, instances: true}
+  - {id: IP_REHAB, label: Inpatient rehabilitation, target: PRV_HOSP_REHAB, instances: true}
+  - {id: PROF_PRIMARY, label: Primary care, target: PRV_PHYS_PRIMARY, instances: true}
+  - {id: PROF_SPEC, label: Specialty care, target: PRV_PHYS_SPEC, instances: true}
+  - {id: PROF_BH, label: Behavioral health clinicians, target: PRV_PHYS_BH, instances: true}
+  - {id: SNF, label: Skilled nursing, target: PRV_PAC_SNF, instances: true}
+  - {id: HOME_HEALTH, label: Home health, target: PRV_PAC_HH, instances: false}   # edge case: no instance data
+  - {id: ASC, label: Ambulatory surgery, target: PRV_AMB_ASC, instances: true}
+  - {id: IMAGING, label: Freestanding imaging, target: PRV_AMB_IMG, instances: false}  # edge case: no instance data
+  # --- Pharmacy (never instances) -------------------------------------------
+  - {id: RX_CHAIN_BRAND, label: Chain retail — brand, target: RX_CHAIN_BRAND, instances: false}
+  - {id: RX_CHAIN_GENERIC, label: Chain retail — generic, target: RX_CHAIN_GENERIC, instances: false}
+  - {id: RX_INDEP_BRAND, label: Independent retail — brand, target: RX_INDEP_BRAND, instances: false}
+  - {id: RX_INDEP_GENERIC, label: Independent retail — generic, target: RX_INDEP_GENERIC, instances: false}
+  - {id: RX_SPEC_HEALTHSYS, label: Health-system specialty, target: RX_SPEC_HEALTHSYS, instances: false}
+  - {id: RX_SPEC_INDEP, label: Independent specialty, target: RX_SPEC_INDEP, instances: false}
+  - {id: RX_MAIL, label: Mail order, target: RX_MAIL, instances: false}

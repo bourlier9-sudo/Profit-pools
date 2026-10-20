@@ -1,0 +1,27 @@
+# Datasets — the global "Market vs company" toggle.
+#
+# MARKET      Total-market view. Payer cells are market enrollment × PMPM
+#             benchmarks derived from the company's experience. Recipient revenue
+#             also includes uninsured, public-program and supplemental spending.
+# ENTERPRISE  The company's own book only (observed). Recipient revenue is the
+#             company's spending with each pool. Excludes the nodes listed below.
+#
+# The ENTERPRISE label is configurable. In this fictional build it is
+# deliberately generic, so invented numbers are never presented as any real
+# company's.
+schema_version: 1
+default: MARKET
+
+datasets:
+  MARKET:
+    label: Total market
+    short_label: Market
+    excluded_nodes: []
+    payer_source_type: estimated
+    funding_sources: [FS_UNINSURED, FS_MCR_FFS, FS_MCD_FFS, FS_SUPPLEMENTAL]
+  ENTERPRISE:
+    label: Enterprise (fictional)
+    short_label: Enterprise
+    excluded_nodes: [MANUFACTURER, HEALTH_SERVICES, RX_PBM]
+    payer_source_type: observed
+    funding_sources: []

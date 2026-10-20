@@ -1,0 +1,53 @@
+# Baseline forecast drivers — FICTIONAL annual rates applied to base-year
+# (2025) driver levels for 2026–2031. These are model INPUTS. CAGRs in the UI
+# are computed from results, never read from here.
+#
+# Lookup is hierarchical: the most specific key wins.
+#   payer drivers      LOB id → LOB group id → default
+#   spending drivers   category id → target leaf's ancestors (nearest first) → layer → default
+#   top_down_growth    leaf → ancestors (nearest first) → layer → default
+#   funding drivers    funding source id → default
+# Recipient and top-down margins hold at base-year values (no drift by default).
+schema_version: 1
+
+enrollment_growth:
+  default: 0.005
+  COMM: 0.002
+  COMM_IND: 0.015
+  MCR: 0.045
+  MA_SNP: 0.07
+  MCD: -0.005
+premium_trend:
+  default: 0.05
+  COMM: 0.050
+  MCR: 0.050
+  MCD: 0.048
+opex_trend:
+  default: 0.025
+utilization_trend:
+  default: 0.010
+  PRV_HOSP: 0.005
+  PRV_AMB: 0.03
+  PRV_PHYS_BH: 0.035
+  PHARMACY: 0.015
+unit_cost_trend:
+  default: 0.035
+  PRV_HOSP: 0.04
+  PRV_PHYS: 0.025
+  RX_SPECIALTY: 0.07
+  RX_RETAIL: 0.01
+population_growth:
+  default: 0.0
+  FS_UNINSURED: 0.01
+  FS_MCR_FFS: -0.02
+  FS_MCD_FFS: -0.01
+supplemental_growth:
+  default: 0.03
+top_down_growth:
+  default: 0.04
+  MFR_BRAND: 0.065
+  MFR_GENERIC: 0.01
+  RX_PBM: 0.05
+  HS_BH: 0.09
+  HST_SOFTWARE: 0.06
+  HST_DATA: 0.10

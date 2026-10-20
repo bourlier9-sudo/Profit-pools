@@ -1,0 +1,506 @@
+"""Read-only views over a `ModelResult`.
+
+These functions only filter, group and sum engine output and recompute
+non-additive ratios from additive parts. They never introduce new economics,
+so every chart built on them agrees with the engine by construction.
+
+Geography semantics
+  national  all rows of the dataset
+  state     rows in the state. National-only (top-down) pools are unavailable.
+  county    payer rows and county-grain recipient rows. State-level supplemental
+            payments and top-down pools are unavailable. Recipient gain at county
+            grain applies the state pool margin (allocated).
+"""
+
+from __future__ import annotations
+
+import weakref
+from functools import lru_cache
+from dataclasses import dataclass, field
+
+import numpy as np
+import pandas as pd
+
+from profit_pools.core.model import ownership as own_mod
+from profit_pools.core.model.engine import ModelResult
+from profit_pools.core.taxonomy import Metadata
+
+ADDITIVE = ["members", "revenue", "allowed", "claims", "opex", "gain", "revenue_with_margin",
+            "payer_revenue", "payer_opex"]
+
+# Spend basis: which part of allowed receipts to show for flow recipients.
+#   allowed   everything the recipient receives (payer/program-paid + consumer)
+#   paid      paid by payers and public programs
+#   consumer  member cost sharing and self-pay (allowed − paid)
+BASES = ("allowed", "paid", "consumer")
+
+
+@dataclass(frozen=True)
+class Geo:
+    level: str = "national"   # national | state | county
+    id: str | None = None
+
+    @staticmethod
+    def parse(meta: Metadata, geo_id: str | None) -> "Geo":
+        if geo_id in (None, "", meta.geography.national_id):
+            return Geo()
+        if geo_id in meta.geography.states:
+            return Geo("state", geo_id)
+        meta.geography.state_of_county(geo_id)  # raises KeyError if unknown
+        return Geo("county", geo_id)
+
+
+@dataclass(frozen=True)
+class Unavailable:
+    node_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class RollupView:
+    parent_id: str | None
+    rows: pd.DataFrame                    # one row per visible child; see rollup()
+    unavailable: list[Unavailable] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def _geo_mask(df: pd.DataFrame, geo: Geo) -> pd.Series:
+    if geo.level == "national":
+        return pd.Series(True, index=df.index)
+    if geo.level == "state":
+        return df["state"] == geo.id
+    return df["county"] == geo.id
+
+
+def select(result: ModelResult, dataset: str, geo: Geo, years: list[int] | int | None = None,
+           basis: str = "allowed") -> pd.DataFrame:
+    """Pool rows for a dataset/geography/years. A non-allowed `basis` keeps only flow recipients and
+    scales revenue and gain to the paid or consumer part (the pool margin applies uniformly)."""
+    if basis not in BASES:
+        raise ValueError(f"Unknown basis {basis!r}")
+    p = result.pools
+    mask = (p["dataset"] == dataset) & _geo_mask(p, geo)
+    if years is not None:
+        mask &= p["year"].isin([years] if isinstance(years, int) else years)
+    if basis != "allowed":
+        mask &= p["revenue_paid"].notna()
+    out = p.loc[mask].copy()
+    if basis != "allowed":
+        part = out["revenue_paid"] if basis == "paid" else out["revenue"] - out["revenue_paid"]
+        frac = np.where(out["revenue"] > 0, part / out["revenue"], 0.0)
+        out["gain"] = out["gain"] * frac
+        out["opex"] = out["opex"] * frac
+        out["revenue"] = part
+    out["revenue_with_margin"] = np.where(out["margin_known"], out["revenue"], 0.0)
+    # Per-member measures use payer rows only, so mixed aggregates never divide sector revenue by members.
+    is_payer = out["members"].notna()
+    out["payer_revenue"] = np.where(is_payer, out["revenue"], 0.0)
+    out["payer_opex"] = np.where(is_payer, out["opex"], 0.0)
+    out["gain"] = out["gain"].where(out["margin_known"], 0.0)
+    return out
+
+
+_AGG: dict[tuple, tuple[weakref.ref, pd.DataFrame]] = {}
+
+
+def _agg(result: ModelResult, dataset: str, geo: Geo, basis: str) -> pd.DataFrame:
+    """node × year sums of ADDITIVE (after the basis transform), memoized per result object. Every
+    roll-up and series sums this, so repeated calls in one render do not rescan the pools frame."""
+    key = (id(result), dataset, geo.level, geo.id, basis)
+    hit = _AGG.get(key)
+    if hit is not None and hit[0]() is result:
+        return hit[1]
+    g = select(result, dataset, geo, None, basis).groupby(["node_id", "year"])[ADDITIVE].sum(min_count=1)
+    if len(_AGG) > 96:
+        _AGG.clear()
+    _AGG[key] = (weakref.ref(result), g)
+    return g
+
+
+def _finish(g: pd.DataFrame) -> pd.DataFrame:
+    """Recompute non-additive measures from additive parts."""
+    a = {c: g[c].to_numpy(dtype=float) for c in ADDITIVE}
+    rwm, rev, mem = a["revenue_with_margin"], a["revenue"], a["members"]
+    has_m = mem > 0
+    mm12 = mem * 12
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cols = {
+            "margin": np.where(rwm > 0, a["gain"] / rwm, np.nan),
+            "margin_coverage": np.where(rev > 0, rwm / rev, np.nan),
+            "revenue_pmpm": np.where(has_m, a["payer_revenue"] / mm12, np.nan),
+            "paid_pmpm": np.where(has_m, a["claims"] / mm12, np.nan),
+            "allowed_pmpm": np.where(has_m, a["allowed"] / mm12, np.nan),
+            "mlr": np.where(has_m, a["claims"] / a["payer_revenue"], np.nan),
+        }
+    cols["gain"] = np.where(rwm > 0, a["gain"], np.nan)
+    for c in ("members", "claims", "allowed", "payer_revenue", "payer_opex"):
+        cols[c] = np.where(has_m, a[c], np.nan)
+    return g.assign(**cols)
+
+
+def _ancestor_map(meta: Metadata, depth: int) -> dict[str, str]:
+    """leaf id → its ancestor at `depth` (the leaf itself if shallower than depth)."""
+    return _ancestors(meta.taxonomy, depth)
+
+
+@lru_cache(maxsize=64)
+def _ancestors(tax, depth: int) -> dict[str, str]:
+    out = {}
+    for leaf in tax.leaves():
+        path = tax.path(leaf.id)
+        out[leaf.id] = path[min(depth, len(path) - 1)].id
+    return out
+
+
+def _unavailable(meta: Metadata, node_ids: list[str], geo: Geo, basis: str = "allowed") -> list[Unavailable]:
+    out = []
+    if basis != "allowed":
+        for nid in node_ids:
+            if not any(l.receives_flows for l in meta.taxonomy.leaves(nid)):
+                out.append(Unavailable(nid, f"{meta.taxonomy[nid].label}: no paid / consumer split "
+                                            f"(spend basis applies to provider and pharmacy pools)."))
+        node_ids = [n for n in node_ids if n not in {u.node_id for u in out}]
+    if geo.level == "national":
+        return out
+    order = {"national": 0, "state": 1, "county": 2}
+    for nid in node_ids:
+        leaves = meta.taxonomy.leaves(nid)
+        if all(order[l.geo_level] < order[geo.level] for l in leaves) and not any(l.receives_flows for l in leaves):
+            finest = max((l.geo_level for l in leaves), key=order.get)
+            out.append(Unavailable(nid, f"{meta.taxonomy[nid].label}: {finest}-level estimate only; "
+                                        f"not available for a {geo.level}."))
+    return out
+
+
+def children_in_dataset(meta: Metadata, dataset: str, parent_id: str | None):
+    tax = meta.taxonomy
+    nodes = tax.layers() if parent_id is None else tax.children(parent_id)
+    return [n for n in nodes if meta.in_dataset(n.id, dataset)]
+
+
+def rollup(result: ModelResult, meta: Metadata, dataset: str, year: int,
+           parent_id: str | None = None, geo: Geo = Geo(), basis: str = "allowed") -> RollupView:
+    """Children of `parent_id` (layers when None) with additive and recomputed metrics.
+
+    Columns: node_id, label, short_label, layer_id, is_leaf, members, revenue, claims, opex, gain,
+             revenue_with_margin, margin, margin_coverage, revenue_pmpm, spend_pmpm, mlr,
+             share_of_parent, coverage, economics.
+    """
+    tax = meta.taxonomy
+    if parent_id is None:
+        children = [n for n in tax.layers() if meta.in_dataset(n.id, dataset)]
+        depth = 0
+    else:
+        if not meta.in_dataset(parent_id, dataset):
+            raise ValueError(f"{parent_id} is excluded from dataset {dataset}")
+        children = [n for n in tax.children(parent_id) if meta.in_dataset(n.id, dataset)]
+        depth = tax[parent_id].depth + 1
+        if not children:
+            raise ValueError(f"{parent_id} is a leaf; nothing to roll up")
+
+    agg = _agg(result, dataset, geo, basis)
+    df = agg.xs(year, level="year") if year in agg.index.get_level_values("year") else agg.iloc[0:0].droplevel("year")
+    amap = _ancestor_map(meta, depth)
+    child_ids = [c.id for c in children]
+    child = df.index.map(amap)
+    df = df[child.isin(child_ids)]
+    g = df.groupby(child[child.isin(child_ids)])[ADDITIVE].sum(min_count=1)
+    g = _finish(g.reindex([c for c in child_ids if c in g.index]))
+
+    unavailable = _unavailable(meta, [c for c in child_ids if c not in g.index], geo, basis)
+    g = g[g["revenue"] > 0]
+    total = g["revenue"].sum()
+    g["share_of_parent"] = g["revenue"] / total if total > 0 else np.nan
+    g.index.name = "node_id"
+    g = g.reset_index()
+    g["label"] = g["node_id"].map(lambda i: tax[i].label)
+    g["short_label"] = g["node_id"].map(lambda i: tax[i].short_label)
+    g["layer_id"] = g["node_id"].map(lambda i: tax[i].layer_id)
+    g["is_leaf"] = g["node_id"].map(lambda i: not any(meta.in_dataset(c.id, dataset) for c in tax.children(i)))
+    g["coverage"] = g["node_id"].map(lambda i: coverage_label(meta, i, dataset))
+    g["economics"] = g["node_id"].map(lambda i: economics_label(meta, i, dataset))
+
+    notes = []
+    if (g["margin_coverage"] < 0.999).any():
+        names = ", ".join(g.loc[g["margin_coverage"] < 0.999, "short_label"])
+        notes.append(f"Margin unavailable for part of: {names}. Margins are computed on revenue with margin data.")
+    if geo.level == "county" and any(tax[c].layer_id != "PAYER" for c in child_ids):
+        notes.append("County view: recipient revenue excludes state-level supplemental payments; "
+                     "gain applies the state pool margin.")
+    return RollupView(parent_id, g, unavailable, notes)
+
+
+def coverage_label(meta: Metadata, node_id: str, dataset: str) -> str:
+    kinds = {l.coverage for l in meta.leaves_in_dataset(dataset, node_id)}
+    return kinds.pop() if len(kinds) == 1 else "mixed"
+
+
+def economics_label(meta: Metadata, node_id: str, dataset: str) -> str:
+    kinds = {l.economics for l in meta.leaves_in_dataset(dataset, node_id)}
+    return kinds.pop() if len(kinds) == 1 else "mixed"
+
+
+def node_series(result: ModelResult, meta: Metadata, dataset: str, node_id: str | None,
+                geo: Geo = Geo(), basis: str = "allowed") -> pd.DataFrame:
+    """Per-year metrics for one node (all in-dataset pools when node_id is None)."""
+    df = _agg(result, dataset, geo, basis)
+    if node_id is not None:
+        leaves = {l.id for l in meta.leaves_in_dataset(dataset, node_id)}
+        df = df[df.index.get_level_values("node_id").isin(leaves)]
+    g = df.groupby(level="year")[ADDITIVE].sum(min_count=1)
+    g = _finish(g)
+    g["is_forecast"] = g.index > result.base_year
+    return g.reset_index()
+
+
+def totals(result: ModelResult, meta: Metadata, dataset: str, year: int, geo: Geo = Geo()) -> dict:
+    """Headline metrics. Revenue is gross sector revenue (includes inter-sector payments)."""
+    view = rollup(result, meta, dataset, year, None, geo)
+    r = view.rows
+    payer = r[r["layer_id"] == "PAYER"]
+    rwm = r["revenue_with_margin"].sum()
+    return {
+        "gross_revenue": r["revenue"].sum(),
+        "operating_gain": r["gain"].sum(min_count=1),
+        "operating_margin": r["gain"].sum() / rwm if rwm > 0 else np.nan,
+        "margin_coverage": rwm / r["revenue"].sum() if r["revenue"].sum() > 0 else np.nan,
+        "enrollment": payer["members"].sum() if len(payer) else np.nan,
+        "payer_revenue": payer["revenue"].sum() if len(payer) else np.nan,
+        "unavailable": view.unavailable,
+    }
+
+
+def cagr(start: float, end: float, years: int) -> float:
+    """Realized CAGR from resulting values. NaN ("n/m") when either endpoint is ≤ 0 or missing."""
+    if years <= 0 or start is None or end is None or not np.isfinite(start) or not np.isfinite(end):
+        return np.nan
+    if start <= 0 or end <= 0:
+        return np.nan
+    return (end / start) ** (1 / years) - 1
+
+
+def change_drivers(result: ModelResult, meta: Metadata, dataset: str, year: int, parent_id: str | None,
+                   geo: Geo = Geo(), basis: str = "allowed") -> pd.DataFrame:
+    """Year-over-year change of each child of `parent_id` and its share of the parent's change."""
+    cur = rollup(result, meta, dataset, year, parent_id, geo, basis).rows.set_index("node_id")
+    if year - 1 not in set(result.pools["year"]):
+        return pd.DataFrame()
+    prev = rollup(result, meta, dataset, year - 1, parent_id, geo, basis).rows.set_index("node_id")
+    out = pd.DataFrame({
+        "label": cur["short_label"],
+        "revenue": cur["revenue"],
+        "d_revenue": cur["revenue"] - prev["revenue"].reindex(cur.index),
+        "gain": cur["gain"],
+        "d_gain": cur["gain"] - prev["gain"].reindex(cur.index),
+        "d_margin_pp": (cur["margin"] - prev["margin"].reindex(cur.index)) * 100,
+    })
+    total = out["d_revenue"].sum()
+    out["share_of_change"] = out["d_revenue"] / total if total else np.nan
+    return out.sort_values("d_revenue", key=np.abs, ascending=False).reset_index()
+
+
+# ---------------------------------------------------------------------------
+# Marimekko tiles
+# ---------------------------------------------------------------------------
+
+SEGMENTATIONS = ("hierarchy", "geography", "funding")
+
+
+def funder_of(meta: Metadata, flows: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """(key, label) of who funds each flow: a payer LOB group or a non-pool funding source."""
+    groups = flows["lob"].map(meta.lobs.group_of)
+    key = groups.where(flows["source_kind"] == "payer", flows["source_id"])
+    labels = {**{g: lbl for g, lbl in meta.lobs.groups.items()},
+              **{f.id: f.short_label for f in meta.funding_sources.values()}}
+    return key, key.map(labels)
+
+
+def marimekko_tiles(result: ModelResult, meta: Metadata, dataset: str, year: int,
+                    parent_id: str | None = None, geo: Geo = Geo(), basis: str = "allowed",
+                    segment_by: str = "hierarchy") -> RollupView:
+    """Columns = children of `parent_id`; tiles = segments within each column.
+
+    Rows: col_id, seg_key, seg_label, seg_node_id (hierarchy only), revenue, gain, revenue_with_margin,
+    margin, margin_coverage, members, share_in_col, col_revenue, col_share — values only (layout is
+    the chart's job). Column totals equal `rollup()` for the same arguments.
+    """
+    if segment_by not in SEGMENTATIONS:
+        raise ValueError(segment_by)
+    tax = meta.taxonomy
+    cols = rollup(result, meta, dataset, year, parent_id, geo, basis)
+    col_ids = list(cols.rows["node_id"])
+    depth = 0 if parent_id is None else tax[parent_id].depth + 1
+    notes = list(cols.notes)
+
+    if segment_by == "funding":
+        f = result.flows
+        f = f[(f["dataset"] == dataset) & (f["year"] == year) & _geo_mask(f, geo)].copy()
+        f["col"] = f["target_id"].map(_ancestor_map(meta, depth))
+        f = f[f["col"].isin(col_ids)]
+        value = {"allowed": f["amount"], "paid": f["paid"], "consumer": f["consumer"]}[basis]
+        frac = np.where(f["amount"] > 0, value / f["amount"], 0.0)
+        f["seg_key"], f["seg_label"] = funder_of(meta, f)
+        f["revenue"] = value
+        f["gain"] = f["gain"].fillna(0.0) * frac
+        f["revenue_with_margin"] = np.where(f["margin"].notna(), value, 0.0)
+        f["members"] = np.nan
+        seg = f.groupby(["col", "seg_key", "seg_label"])[["revenue", "gain", "revenue_with_margin", "members"]].sum(min_count=1)
+        seg = seg.reset_index()
+        # Pools that are not flow recipients (payers, top-down — incl. PBM inside Pharmacy) keep one
+        # explicitly labeled segment per column, so columns still reconcile to rollup().
+        other = select(result, dataset, geo, year, basis)
+        other = other[other["revenue_paid"].isna()]
+        other["col"] = other["node_id"].map(_ancestor_map(meta, depth))
+        other = other[other["col"].isin(col_ids)]
+        if len(other):
+            o = other.groupby("col")[["revenue", "gain", "revenue_with_margin", "members"]].sum(min_count=1).reset_index()
+            o["seg_key"], o["seg_label"] = "_unsplit", "Not split by funder"
+            seg = pd.concat([seg, o], ignore_index=True)
+            notes.append("Funding split applies to provider and dispensing-pharmacy pools; "
+                         "payer and top-down pools appear as one unsplit segment.")
+        seg["seg_node_id"] = None
+    else:
+        df = select(result, dataset, geo, year, basis)
+        df["col"] = df["node_id"].map(_ancestor_map(meta, depth))
+        df = df[df["col"].isin(col_ids)]
+        if segment_by == "hierarchy":
+            sub = _ancestor_map(meta, depth + 1)
+            df["seg_key"] = df["node_id"].map(sub)
+            df["seg_label"] = df["seg_key"].map(lambda i: tax[i].short_label)
+        else:
+            if geo.level == "national":
+                df["seg_key"] = df["state"]
+                lab = {s.id: s.label for s in meta.geography.states.values()} | {meta.geography.national_id: "National only"}
+            elif geo.level == "state":
+                df["seg_key"] = df["county"].fillna("_statewide")
+                lab = {c: l for c, l, _ in meta.geography.states[geo.id].counties} | {"_statewide": "Statewide (supplemental)"}
+            else:
+                df["seg_key"] = df["county"]
+                lab = {geo.id: meta.geography.county_label(geo.id)}
+            df["seg_label"] = df["seg_key"].map(lab)
+        seg = df.groupby(["col", "seg_key", "seg_label"])[["revenue", "gain", "revenue_with_margin", "members"]].sum(min_count=1)
+        seg = seg.reset_index()
+        seg["seg_node_id"] = seg["seg_key"] if segment_by == "hierarchy" else None
+
+    seg = _finish(seg.assign(allowed=np.nan, claims=np.nan, opex=np.nan, payer_revenue=np.nan, payer_opex=np.nan))
+    seg = seg[seg["revenue"] > 0]
+    colrev = cols.rows.set_index("node_id")["revenue"]
+    seg["col_revenue"] = seg["col"].map(colrev)
+    seg["share_in_col"] = seg["revenue"] / seg["col_revenue"]
+    seg["col_share"] = seg["col"].map(cols.rows.set_index("node_id")["share_of_parent"])
+    seg["col_order"] = seg["col"].map({c: i for i, c in enumerate(col_ids)})
+    seg = seg.sort_values(["col_order", "revenue"], ascending=[True, False]).drop(columns="col_order")
+    seg = seg.rename(columns={"col": "col_id"}).reset_index(drop=True)
+    keep = ["col_id", "seg_key", "seg_label", "seg_node_id", "revenue", "gain", "revenue_with_margin",
+            "margin", "margin_coverage", "members", "share_in_col", "col_revenue", "col_share"]
+    return RollupView(parent_id, seg[keep], cols.unavailable, notes)
+
+
+IMPACT_MIN = 0.5e6   # $0.5M: below this a tile counts as unaffected (display rounding is $0.1B / $1M)
+
+
+def compare_tiles(result: ModelResult, base: ModelResult, meta: Metadata, dataset: str, year: int,
+                  parent_id: str | None = None, geo: Geo = Geo(), basis: str = "allowed",
+                  segment_by: str = "hierarchy") -> RollupView:
+    """Scenario tiles plus d_revenue / d_gain / d_margin (scenario − baseline) per tile."""
+    cur = marimekko_tiles(result, meta, dataset, year, parent_id, geo, basis, segment_by)
+    rows = cur.rows
+    if rows.empty:
+        return cur
+    bt = marimekko_tiles(base, meta, dataset, year, parent_id, geo, basis, segment_by).rows
+    bt = bt.set_index(["col_id", "seg_key"])[["revenue", "gain", "margin"]]
+    j = rows.join(bt, on=["col_id", "seg_key"], rsuffix="_b")
+    rows = rows.assign(d_revenue=j["revenue"] - j["revenue_b"].fillna(0),
+                       d_gain=j["gain"].fillna(0) - j["gain_b"].fillna(0),
+                       d_margin=j["margin"] - j["margin_b"])
+    return RollupView(cur.parent_id, rows, cur.unavailable, cur.notes)
+
+
+def impact_layout(rows: pd.DataFrame, metric: str = "d_gain") -> pd.DataFrame:
+    """Re-lay compare tiles so area ∝ |Δ metric|: column width = column Σ|Δ| / total Σ|Δ|, height = tile
+    |Δ| / column Σ|Δ|. Increases and decreases both take space; unaffected tiles drop out. The deltas
+    themselves are untouched (they come from the engine)."""
+    mag = rows[metric].abs().where(rows[metric].abs() >= IMPACT_MIN, 0.0)
+    out = rows.assign(impact=mag)[mag > 0].copy()
+    if out.empty:
+        return out
+    col = out.groupby("col_id", sort=False)["impact"].transform("sum")
+    out["share_in_col"] = out["impact"] / col
+    out["col_share"] = col / out["impact"].sum()
+    out["col_revenue"] = col
+    order = out.groupby("col_id", sort=False)["impact"].sum().sort_values(ascending=False)
+    out["_o"] = out["col_id"].map({c: i for i, c in enumerate(order.index)})
+    return out.sort_values(["_o", "impact"], ascending=[True, False]).drop(columns="_o").reset_index(drop=True)
+
+
+def revenue_components(result: ModelResult, meta: Metadata, dataset: str, year: int, node_id: str,
+                       geo: Geo = Geo()) -> pd.DataFrame:
+    """Recipient revenue by funder with paid / consumer split (inspector: how revenue is built)."""
+    leaves = {l.id for l in meta.leaves_in_dataset(dataset, node_id) if l.receives_flows}
+    f = result.flows
+    f = f[(f["dataset"] == dataset) & (f["year"] == year) & _geo_mask(f, geo) & f["target_id"].isin(leaves)].copy()
+    if f.empty:
+        return pd.DataFrame(columns=["funder", "allowed", "paid", "consumer", "share"])
+    f["key"], f["funder"] = funder_of(meta, f)
+    g = f.groupby(["key", "funder"])[["amount", "paid", "consumer"]].sum().reset_index()
+    g = g.rename(columns={"amount": "allowed"})
+    g["share"] = g["allowed"] / g["allowed"].sum()
+    return g.sort_values("allowed", ascending=False).drop(columns="key").reset_index(drop=True)
+
+
+def node_metrics(result: ModelResult, meta: Metadata, dataset: str, year: int, node_id: str | None,
+                 geo: Geo = Geo(), basis: str = "allowed") -> pd.Series | None:
+    """One node's metrics (all in-dataset pools when node_id is None); None if unavailable here."""
+    if node_id is None:
+        rows = rollup(result, meta, dataset, year, None, geo, basis).rows
+        if rows.empty:
+            return None
+        g = rows[ADDITIVE].sum(min_count=1).to_frame().T
+        out = _finish(g).iloc[0]
+        out["share_of_parent"] = 1.0
+        return out
+    parent = meta.taxonomy[node_id].parent_id
+    rows = rollup(result, meta, dataset, year, parent, geo, basis).rows.set_index("node_id")
+    return rows.loc[node_id] if node_id in rows.index else None
+
+
+@dataclass(frozen=True)
+class OwnershipView:
+    assets: pd.DataFrame        # one row per owned asset (summed over states in scope)
+    totals: dict                # consolidated P&L lines (ownership.consolidate)
+    note: str | None = None     # why the view is empty, if it is
+
+
+def ownership_view(result: ModelResult, meta: Metadata, year: int, geo: Geo = Geo()) -> OwnershipView:
+    """Owned assets and the consolidated enterprise P&L for one year and geography (state grain)."""
+    ds = own_mod.dataset()
+    if geo.level == "county":
+        return OwnershipView(pd.DataFrame(), {}, "Owned assets are tracked by state; choose a state or National.")
+    o = result.ownership
+    o = o[(o["dataset"] == ds) & (o["year"] == year)]
+    if geo.level == "state":
+        o = o[o["state"] == geo.id]
+    if o.empty:
+        return OwnershipView(pd.DataFrame(), {}, "No owned assets operate in this geography.")
+    p = result.pools
+    p = p[(p["dataset"] == ds) & (p["year"] == year) & p["members"].notna() & _geo_mask(p, geo)]
+    if p.empty:
+        return OwnershipView(pd.DataFrame(), {}, "The enterprise has no plans in this geography.")
+    totals = own_mod.consolidate(o, p)
+    labels = {a.id: a.label for a in own_mod.assets(meta)}
+    g = o.groupby(["asset_id", "node_id"], sort=False)
+    a = g[["enterprise_spend", "routed", "third_party", "owned_revenue", "external_spend"]].sum()
+    a["owned_gain"] = g["owned_gain"].sum(min_count=1)
+    known = o["owned_gain"].notna()
+    rk = o[known].groupby(["asset_id", "node_id"])["owned_revenue"].sum().reindex(a.index)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        a["owned_margin"] = a["owned_gain"] / rk
+        a["routing_share"] = a["routed"] / a["enterprise_spend"]
+        mk = (o.assign(w=o["routed"] * o["market_margin"]).groupby(["asset_id", "node_id"])["w"].sum(min_count=1)
+              .reindex(a.index))
+        a["market_margin"] = mk / a["routed"]
+    a = a.reset_index()
+    a["label"] = a["asset_id"].map(labels)
+    a["pool"] = a["node_id"].map(lambda n: meta.taxonomy[n].short_label if n in meta.taxonomy else n)
+    a["states"] = a["asset_id"].map(o.groupby("asset_id")["state"].nunique())
+    return OwnershipView(a, totals)
